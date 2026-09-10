@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { lerEnvelope, type LeituraDeEnvelope } from "@/lib/webhooks/contrato";
+import { conferirEnvelope, type LeituraDeEnvelope } from "@/lib/webhooks/contrato";
 
 const text = z.string().min(1);
 const instanceData = z.looseObject({
@@ -27,18 +27,64 @@ const data = z.looseObject({
   instanceData: instanceData.optional(),
 });
 
-export const ryzeEnvelopeSchema = z.looseObject({
-  event: z.enum(["message.exchange", "message.status"]),
-  data,
+const root = z.looseObject({
+  event: text,
+  data: z.unknown().optional(),
+  instanceData: instanceData.optional(),
 });
+
+export const ryzeEnvelopeSchema = z.discriminatedUnion("event", [
+  z.looseObject({ event: z.literal("message.exchange"), data, instanceData: instanceData.optional() }),
+  z.looseObject({ event: z.literal("message.status"), data, instanceData: instanceData.optional() }),
+]);
 
 export type RyzeEnvelope = z.infer<typeof ryzeEnvelopeSchema>;
 export type RyzeMessage = RyzeEnvelope["data"]["message"];
+export type RyzeWebhookParse =
+  | { ok: true; kind: "supported"; envelope: RyzeEnvelope }
+  | { ok: true; kind: "unsupported"; event: string }
+  | { ok: false; motivo: "json_invalido" | "contrato_violado"; campos: string[] };
 
 export function lerEnvelopeRyze(rawBody: string): LeituraDeEnvelope<RyzeEnvelope> {
-  return lerEnvelope(rawBody, ryzeEnvelopeSchema);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    return { ok: false, motivo: "json_invalido", campos: [] };
+  }
+  return conferirEnvelope(parsed, ryzeEnvelopeSchema);
 }
 
-export function ryzeExternalId(envelope: RyzeEnvelope): string | null {
-  return envelope.data.message.id ?? envelope.data.id ?? null;
+export function lerWebhookRyze(rawBody: string): RyzeWebhookParse {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    return { ok: false, motivo: "json_invalido", campos: [] };
+  }
+
+  const base = root.safeParse(parsed);
+  if (!base.success) {
+    return { ok: false, motivo: "contrato_violado", campos: base.error.issues.map((i) => i.path.join(".") || "(raiz)") };
+  }
+  if (base.data.event !== "message.exchange" && base.data.event !== "message.status") {
+    return { ok: true, kind: "unsupported", event: base.data.event };
+  }
+  const strict = conferirEnvelope(parsed, ryzeEnvelopeSchema);
+  return strict.ok ? { ok: true, kind: "supported", envelope: strict.envelope } : strict;
+}
+
+export function ryzeEventId(envelope: RyzeEnvelope): string | null {
+  return envelope.data.id ?? null;
+}
+
+export function ryzeMessageExternalId(envelope: RyzeEnvelope): string | null {
+  return envelope.data.message.id ?? null;
+}
+
+export function ryzeStatusDedupeKey(envelope: RyzeEnvelope): string | null {
+  const eventId = ryzeEventId(envelope);
+  const messageId = ryzeMessageExternalId(envelope);
+  const status = envelope.data.message.status;
+  return eventId ?? (messageId && status ? `${envelope.event}:${messageId}:${status}` : null);
 }

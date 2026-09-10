@@ -19,8 +19,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { CHANNEL_PROVIDER_RYZE, CHANNEL_PROVIDER_ZERNIO } from "./capabilities";
-import { verifyRyzeBearer } from "./ryze/webhook";
-import { lerEnvelopeRyze } from "./ryze/envelope";
+import { MIN_RYZE_WEBHOOK_SECRET_LEN, verifyRyzeBearer } from "./ryze/webhook";
+import { lerWebhookRyze } from "./ryze/envelope";
 import { sincronizarSaudeDaConexao } from "./health";
 import {
   atualizarEspelhoDoTemplate,
@@ -94,11 +94,14 @@ export async function handleInboundWebhook(
 }
 
 async function ryzeInbound(input: InboundWebhookInput): Promise<InboundWebhookOutcome> {
+  if (!input.secret || input.secret.length < MIN_RYZE_WEBHOOK_SECRET_LEN) {
+    return { ok: false, code: "unauthorized", message: "webhook_secret_unavailable" };
+  }
   if (!verifyRyzeBearer(input.headers.get("authorization"), input.secret)) {
     return { ok: false, code: "unauthorized", message: "bad_bearer" };
   }
 
-  const leitura = lerEnvelopeRyze(input.rawBody);
+  const leitura = lerWebhookRyze(input.rawBody);
   if (!leitura.ok) {
     return {
       ok: false,
@@ -107,6 +110,10 @@ async function ryzeInbound(input: InboundWebhookInput): Promise<InboundWebhookOu
         ? "invalid_json"
         : `payload fora do contrato do canal: ${leitura.campos.join(", ")}`,
     };
+  }
+
+  if (leitura.kind === "unsupported") {
+    return { ok: true, body: { status: "ignored", reason: "ryze_event_not_supported", event: leitura.event } };
   }
 
   if (leitura.envelope.data.message.direction === "outgoing") {

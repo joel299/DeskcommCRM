@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+/* O adapter de persistência abaixo é um dublê parcial do cliente; o banco real é validado pelo test-db. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { persistRyzeSession } from "@/lib/channels/ryze/control-plane";
 import { sql } from "./gov-helpers";

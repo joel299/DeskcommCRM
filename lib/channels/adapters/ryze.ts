@@ -85,7 +85,7 @@ export const ryzeAdapter: ChannelAdapter = {
       return { externalId: null };
     }
 
-    const admin = (envelope as unknown as { db?: any }).db ?? createAdminClient();
+    const admin = (envelope as unknown as { db?: ReturnType<typeof createAdminClient> }).db ?? createAdminClient();
     const creds = await resolveRyzeCreds(admin, {
       organizationId: envelope.organizationId,
       instanceName: envelope.sessionRef,

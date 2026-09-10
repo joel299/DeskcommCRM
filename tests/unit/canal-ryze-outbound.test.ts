@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+/* Os dublês abaixo representam Supabase parcialmente; o contrato de produção é coberto por typecheck e invariantes DB. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 vi.mock("@/lib/automation/outbound-ip", () => ({
   assertDestinoResolvidoSeguro: vi.fn().mockResolvedValue(undefined),
@@ -413,7 +415,7 @@ describe("adapter outbound ryze & control plane (F3)", () => {
 
       // 1ª execução: lista vazia -> dispara CREATE -> salva no banco
       // 2ª execução: lista retorna a instância já existente com token -> reutiliza com zero CREATE
-      let mockFetch = vi.fn()
+      const mockFetch = vi.fn()
         .mockResolvedValueOnce({
           ok: true,
           status: 200,

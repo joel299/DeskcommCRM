@@ -21,6 +21,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { CHANNEL_PROVIDER_RYZE, CHANNEL_PROVIDER_ZERNIO } from "./capabilities";
 import { MIN_RYZE_WEBHOOK_SECRET_LEN, verifyRyzeBearer } from "./ryze/webhook";
 import { lerWebhookRyze } from "./ryze/envelope";
+import { ingestRyzeInbound } from "./ryze/ingest";
 import { sincronizarSaudeDaConexao } from "./health";
 import {
   atualizarEspelhoDoTemplate,
@@ -83,7 +84,7 @@ export async function handleInboundWebhook(
 
   switch (provider) {
     case CHANNEL_PROVIDER_RYZE:
-      return ryzeInbound(input);
+      return ryzeInbound(admin, input);
     case CHANNEL_PROVIDER_ZERNIO:
       return zernioInbound(admin, input);
     default:
@@ -93,7 +94,10 @@ export async function handleInboundWebhook(
   }
 }
 
-async function ryzeInbound(input: InboundWebhookInput): Promise<InboundWebhookOutcome> {
+async function ryzeInbound(
+  admin: SupabaseClient,
+  input: InboundWebhookInput,
+): Promise<InboundWebhookOutcome> {
   if (!input.secret || input.secret.length < MIN_RYZE_WEBHOOK_SECRET_LEN) {
     return { ok: false, code: "unauthorized", message: "webhook_secret_unavailable" };
   }
@@ -116,11 +120,12 @@ async function ryzeInbound(input: InboundWebhookInput): Promise<InboundWebhookOu
     return { ok: true, body: { status: "ignored", reason: "ryze_event_not_supported", event: leitura.event } };
   }
 
-  if (leitura.envelope.data.message.direction === "outgoing") {
-    return { ok: true, body: { status: "ignored", reason: "ryze_outgoing_reconciliation_pending" } };
-  }
-
-  return { ok: false, code: "provider_mismatch", message: "ryze_ingest_not_ready" };
+  const resultado = await ingestRyzeInbound(admin, {
+    organizationId: input.session.organization_id,
+    channelSessionId: input.session.id,
+    envelope: leitura.envelope,
+  });
+  return { ok: true, body: resultado };
 }
 
 async function zernioInbound(

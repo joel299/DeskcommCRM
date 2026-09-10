@@ -31,12 +31,12 @@
 
 - [ ] **Task 4: Inbound + Sanitização P0 + Idempotência (F4)**
   - Requisito: RYZE-007, RYZE-008, RYZE-009, RYZE-010, RYZE-011, RYZE-012, RYZE-013
-  - Arquivos: `lib/channels/ryze/webhook.ts`, `lib/channels/ryze/envelope.ts`, `lib/channels/ryze/ingest.ts`, `lib/channels/inbound.ts`, `lib/channels/arquivo-de-webhook.ts`, `app/api/v1/webhooks/channel/[token]/route.ts`, `supabase/migrations/20260910220000_0211_ryze_webhook_log.sql`, `supabase/baseline.sql`, `supabase/migrations/MANIFEST.md`, `.specs/features/ryze-channel/context-manifest.json`, `tests/unit/ryze-f4-contract.test.ts`, `tests/unit/contrato-do-webhook-zernio.test.ts`
-  - Verificação inicial: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, contrato F4 + regressão Zernio (20/20), invariantes Postgres Ryze (7/7).
+  - Arquivos: `lib/channels/ryze/webhook.ts`, `lib/channels/ryze/envelope.ts`, `lib/channels/ryze/ingest.ts`, `lib/channels/inbound.ts`, `lib/channels/arquivo-de-webhook.ts`, `app/api/v1/webhooks/channel/[token]/route.ts`, `supabase/migrations/20260910220000_0211_ryze_webhook_log.sql`, `supabase/baseline.sql`, `supabase/migrations/MANIFEST.md`, `.specs/features/ryze-channel/context-manifest.json`, `tests/unit/ryze-f4-contract.test.ts`, `tests/unit/contrato-do-webhook-zernio.test.ts`, `tests/unit/ryze-webhook-archive.test.ts`, `tests/unit/ryze-webhook-route.test.ts`
+  - Verificação: `pnpm typecheck`, lint direcionado, contrato F4 + regressão Zernio + rota + arquivamento (60/60), invariantes Postgres Ryze (7/7), baseline INSTALL/UPDATE e `git diff --check`.
   - Implementação atual: `lib/channels/ryze/ingest.ts` processa `incoming`, reconcilia `outgoing` sem inserir e atualiza `message.status` sem criar mensagem; efeitos pós-entrada só rodam após insert novo.
-  - Teste adicional: `tests/unit/channel-ingest-ryze.test.ts` cobre incoming, duplicate 23505, outgoing sem IA e status sem insert.
+  - Testes adicionais: `tests/unit/channel-ingest-ryze.test.ts` cobre incoming, duplicate 23505, outgoing sem IA e status sem insert; `tests/unit/ryze-webhook-archive.test.ts` prova sanitização antes do arquivamento; `tests/unit/ryze-webhook-route.test.ts` cobre `200 ignored`, `400` e `401` na rota neutra.
   - Correções do checkpoint: sanitização root/nested de `instanceData`, comprimento mínimo do Bearer, eventos não suportados respondem `200 ignored`, chaves de evento/mensagem/status separadas e governança reconciliada para GRU-35.
-  - Status: EM IMPLEMENTAÇÃO; validação de rota/E2E e governança global ainda pendentes.
+  - Status: IMPLEMENTAÇÃO F4 CONCLUÍDA; aprovação externa permanece necessária antes de mover a issue para Done.
 
 - [ ] **Task 5: E2E + Regressão de Provedores (F5)**
   - Requisito: RYZE-015, RYZE-018

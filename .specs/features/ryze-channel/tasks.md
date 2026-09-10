@@ -18,8 +18,14 @@
 
 - [x] **Task 2: Vocabulário + Schema + Invariantes (F2)**
   - Requisito: RYZE-001, RYZE-003, RYZE-004
-  - Arquivos: `lib/channels/types.ts`, `lib/channels/capabilities.ts`, `lib/channels/session-ref.ts`, `lib/channels/templates-fonte.ts`, `lib/channels/index.ts`, `scripts/lint-channels.pattern.ts`, `supabase/migrations/20260910180000_0210_canal_ryze_vocabulario.sql`, `tests/unit/canal-ryze-vocabulario.test.ts`
-  - Verificação: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, `pnpm vitest run tests/unit/canal-ryze-vocabulario.test.ts tests/unit/channel-capability-matrix.test.ts` (PASS 24/24)
+  - Arquivos: `lib/channels/types.ts`, `lib/channels/capabilities.ts`, `lib/channels/session-ref.ts`, `lib/channels/templates-fonte.ts`, `lib/channels/index.ts`, `scripts/lint-channels.pattern.ts`, `supabase/migrations/20260910180000_0210_canal_ryze_vocabulario.sql`, `supabase/baseline.sql`, `supabase/migrations/MANIFEST.md`, `tests/unit/canal-ryze-vocabulario.test.ts`, `tests/invariants/ryze-provider-schema.test.ts`
+  - Verificação:
+    - `pnpm typecheck`
+    - `pnpm lint:channels`
+    - `pnpm lint:role-rank`
+    - `pnpm vitest run tests/unit/canal-ryze-vocabulario.test.ts tests/unit/channel-capability-matrix.test.ts` (PASS 24/24)
+    - `pnpm test:db` (executa `scripts/test-db.sh` com `baseline.sql` modo INSTALL + UPDATE idempotente e suíte de invariantes contra Postgres pg15 efêmero)
+    - `tests/invariants/ryze-provider-schema.test.ts` (PASS 6/6: data_type bytea, ryze_instance_name, check constraints, idx_channel_sessions_ryze_instance_name_active e regressão de legados)
   - Status: COMPLETO (Entregue e submetido para gate F2)
 
 - [ ] **Task 3: Adapter Outbound (F3)**

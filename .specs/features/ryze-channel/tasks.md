@@ -6,20 +6,21 @@
   - Requisito: RYZE-001, RYZE-019
   - Arquivos: `.specs/features/ryze-channel/context-manifest.json`
   - Verificação: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, `pnpm test:unit`
-  - Status: COMPLETO (Gate F0 aprovado no Linear issue GRU-31 / DESKCOMM-00)
+  - Status: COMPLETO (Gate F0 aprovado no Linear issue GRU-31 / DESKCOMM-01)
 
 - [x] **Task 1: SDD + Contrato (F1)**
   - Requisito: RYZE-001 até RYZE-020
-  - Arquivos: `.specs/features/ryze-channel/spec.md`, `design.md`, `tasks.md`
+  - Arquivos: `.specs/features/ryze-channel/spec.md`, `design.md`, `tasks.md`, `docs/implementation/ryze/*`
   - Mapeamento requisito → teste: Requisitos definidos no spec.md, mapeados no design.md e desacoplados por fase em tasks.md.
   - Hipóteses confirmadas: `POST /api/v1/webhooks/channel/[token]` como rota neutra única; expurgo P0 de `instanceData.token` e bloqueio de SSRF em `instanceData.baseUrl`.
   - Verificação: Mapeamento completo de contratos e premissas CONFIRMED vs INFERRED.
-  - Status: COMPLETO (Documentação entregue e pronta para gate F1)
+  - Status: COMPLETO (Gate F1 aprovado no Linear issue GRU-32 / DESKCOMM-02)
 
-- [ ] **Task 2: Vocabulário + Schema + Invariantes (F2)**
+- [x] **Task 2: Vocabulário + Schema + Invariantes (F2)**
   - Requisito: RYZE-001, RYZE-003, RYZE-004
-  - Arquivos: `lib/channels/types.ts`, `lib/channels/capabilities.ts`, `lib/channels/session-ref.ts`, `lib/channels/templates-fonte.ts`, `lib/channels/index.ts`, `scripts/lint-channels.pattern.ts`, `supabase/migrations/20260910180000_0210_canal_ryze_vocabulario.sql`
-  - Verificação: `pnpm test:unit`, `pnpm test:db`, `pnpm lint:channels`
+  - Arquivos: `lib/channels/types.ts`, `lib/channels/capabilities.ts`, `lib/channels/session-ref.ts`, `lib/channels/templates-fonte.ts`, `lib/channels/index.ts`, `scripts/lint-channels.pattern.ts`, `supabase/migrations/20260910180000_0210_canal_ryze_vocabulario.sql`, `tests/unit/canal-ryze-vocabulario.test.ts`
+  - Verificação: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, `pnpm vitest run tests/unit/canal-ryze-vocabulario.test.ts tests/unit/channel-capability-matrix.test.ts` (PASS 24/24)
+  - Status: COMPLETO (Entregue e submetido para gate F2)
 
 - [ ] **Task 3: Adapter Outbound (F3)**
   - Requisito: RYZE-002, RYZE-005, RYZE-006, RYZE-014

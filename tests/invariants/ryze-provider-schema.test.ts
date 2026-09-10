@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { persistRyzeSession } from "@/lib/channels/ryze/control-plane";
 import { sql } from "./gov-helpers";
 
 /**
@@ -35,6 +36,68 @@ function erroDe(fn: () => unknown): string {
     return String(err.stderr ?? "") + String(err.message ?? "");
   }
   throw new Error("o INSERT passou — a trava não existe neste banco");
+}
+
+function dbAdapterReal(): any {
+  const builder: any = {
+    table: "channel_sessions",
+    mode: "select",
+    filters: [] as Array<[string, string, string | null]>,
+    payload: null as Record<string, unknown> | null,
+    from(table: string) {
+      this.table = table;
+      return this;
+    },
+    select() {
+      this.mode = "select";
+      return this;
+    },
+    eq(column: string, value: string) {
+      this.filters.push([column, "=", value]);
+      return this;
+    },
+    is(column: string, value: null) {
+      this.filters.push([column, "is", value]);
+      return this;
+    },
+    maybeSingle() {
+      const org = this.filters.find((f: [string, string, string | null]) => f[0] === "organization_id")?.[2];
+      const instance = this.filters.find((f: [string, string, string | null]) => f[0] === "ryze_instance_name")?.[2];
+      const id = org && instance
+        ? sql(`select id from public.channel_sessions where organization_id='${org}' and provider='ryze' and ryze_instance_name='${instance}' and archived_at is null limit 1`).trim()
+        : "";
+      this.filters = [];
+      return Promise.resolve({ data: id ? { id } : null, error: null });
+    },
+    update(payload: Record<string, unknown>) {
+      this.mode = "update";
+      this.payload = payload;
+      return this;
+    },
+    insert(payload: Record<string, unknown>) {
+      this.mode = "insert";
+      this.payload = payload;
+      return this;
+    },
+    then(resolve: (value: { error: null }) => unknown, reject?: (reason: unknown) => unknown) {
+      try {
+        if (this.mode === "insert") {
+          const p = this.payload as Record<string, string>;
+          sql(`insert into public.channel_sessions (organization_id, provider, ryze_instance_name, ryze_token_encrypted, webhook_secret_encrypted, metadata) values ('${p.organization_id}', 'ryze', '${p.ryze_instance_name}', '${p.ryze_token_encrypted}'::bytea, '${p.webhook_secret_encrypted}'::bytea, '{}'::jsonb)`);
+        } else if (this.mode === "update") {
+          const id = this.filters.find((f: [string, string, string | null]) => f[0] === "id")?.[2];
+          const org = this.filters.find((f: [string, string, string | null]) => f[0] === "organization_id")?.[2];
+          const p = this.payload as Record<string, string>;
+          sql(`update public.channel_sessions set ryze_token_encrypted='${p.ryze_token_encrypted}'::bytea where id='${id}' and organization_id='${org}'`);
+        }
+        this.filters = [];
+        return Promise.resolve({ error: null }).then(resolve, reject);
+      } catch (error) {
+        return Promise.reject(error).then(resolve, reject);
+      }
+    },
+  };
+  return { from: (table: string) => builder.from(table) };
 }
 
 describe("0210 · schema e invariantes do provider ryze", () => {
@@ -93,43 +156,37 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     expect(msg).toMatch(/idx_channel_sessions_ryze_instance_name_active/);
   });
 
-  it("sessão ryze inserida via seam de persistência armazena bytea cifrado e permite update pelo id confiavel da org", () => {
-    const org = novaOrg(`inv-ryze-persist-${Date.now()}`);
-    const inst = `inst-persist-${Date.now()}`;
-    const tokenHex = `\\x${Buffer.from("tok_secret_123").toString("hex")}`;
+  it("executa persistRyzeSession no Postgres real do harness com INSERT/UPDATE canônicos", async () => {
+    const org = novaOrg(`inv-ryze-production-seam-${Date.now()}`);
+    const inst = `inst-production-seam-${Date.now()}`;
+    const db = dbAdapterReal();
 
-    // 1. Simula a persistência inicial (INSERT)
-    sql(`
-      insert into public.channel_sessions (organization_id, provider, ryze_instance_name, ryze_token_encrypted, webhook_secret_encrypted)
-      values ('${org}', 'ryze', '${inst}', '${tokenHex}'::bytea, '\\x00'::bytea);
-    `);
+    const inserted = await persistRyzeSession(db, {
+      organizationId: org,
+      instanceName: inst,
+      encryptedToken: "\\xdeadbeef",
+      webhookSecretEncrypted: "\\xfeedface",
+    });
+    expect(inserted.action).toBe("inserted");
 
-    const insertedCipher = sql(`
-      select encode(ryze_token_encrypted, 'hex')
-        from public.channel_sessions
-       where organization_id = '${org}' and ryze_instance_name = '${inst}' and archived_at is null
-    `).trim();
-    expect(insertedCipher).toBe(Buffer.from("tok_secret_123").toString("hex"));
+    const status = sql(`select status from public.channel_sessions where organization_id='${org}' and ryze_instance_name='${inst}'`).trim();
+    const cipher = sql(`select encode(ryze_token_encrypted, 'hex') from public.channel_sessions where organization_id='${org}' and ryze_instance_name='${inst}'`).trim();
+    const webhookCipher = sql(`select encode(webhook_secret_encrypted, 'hex') from public.channel_sessions where organization_id='${org}' and ryze_instance_name='${inst}'`).trim();
+    expect(status).toBe("STARTING");
+    expect(cipher).toBe("deadbeef");
+    expect(webhookCipher).toBe("feedface");
 
-    // 2. Simula a atualização (UPDATE por id confiável da org)
-    const sessionId = sql(`
-      select id from public.channel_sessions
-       where organization_id = '${org}' and ryze_instance_name = '${inst}' and archived_at is null
-    `).trim();
+    const updated = await persistRyzeSession(db, {
+      organizationId: org,
+      instanceName: inst,
+      encryptedToken: "\\xcafebabe",
+    });
+    expect(updated.action).toBe("updated");
 
-    const newTokenHex = `\\x${Buffer.from("tok_secret_updated_456").toString("hex")}`;
-    sql(`
-      update public.channel_sessions
-         set ryze_token_encrypted = '${newTokenHex}'::bytea, updated_at = now()
-       where id = '${sessionId}' and organization_id = '${org}';
-    `);
-
-    const updatedCipher = sql(`
-      select encode(ryze_token_encrypted, 'hex')
-        from public.channel_sessions
-       where id = '${sessionId}'
-    `).trim();
-    expect(updatedCipher).toBe(Buffer.from("tok_secret_updated_456").toString("hex"));
+    const rowCount = sql(`select count(*) from public.channel_sessions where organization_id='${org}' and ryze_instance_name='${inst}'`).trim();
+    const updatedCipher = sql(`select encode(ryze_token_encrypted, 'hex') from public.channel_sessions where organization_id='${org}' and ryze_instance_name='${inst}'`).trim();
+    expect(rowCount).toBe("1");
+    expect(updatedCipher).toBe("cafebabe");
   });
 
   it("sessões legadas (waha, meta_cloud, zernio) continuam válidas e protegidas pelas constraints", () => {

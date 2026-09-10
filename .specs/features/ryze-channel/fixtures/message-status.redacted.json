@@ -1,0 +1,15 @@
+{
+  "event": "message.status",
+  "data": {
+    "id": "delivery-event-redacted-001",
+    "message": {
+      "id": "message-external-redacted-001",
+      "status": "delivered",
+      "direction": "outgoing",
+      "timestamp": "2026-09-10T23:00:00Z"
+    }
+  },
+  "instanceData": {
+    "instance": "redacted-instance"
+  }
+}

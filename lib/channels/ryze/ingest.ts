@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { aplicarEfeitosPosEntrada } from "@/lib/channels/pos-entrada";
 import type { RyzeEnvelope, RyzeExchangeMessage } from "./envelope";
-import { ryzeEventId } from "./envelope";
+import { ryzeEventId, ryzeStatusDedupeKey } from "./envelope";
 
 export type RyzeIngestResult =
   | { status: "ingested"; conversationId?: string; messageId?: string }
@@ -26,34 +26,70 @@ export async function ingestRyzeInbound(
   admin: SupabaseClient,
   input: RyzeIngestInput,
 ): Promise<RyzeIngestResult> {
-  const eventId = ryzeEventId(input.envelope);
-  if (eventId) {
-    const claimed = await claimRyzeEvent(admin, input, eventId);
+  const eventKey = input.envelope.event === "message.status"
+    ? ryzeStatusDedupeKey(input.envelope)
+    : ryzeEventId(input.envelope);
+  if (eventKey) {
+    const claimed = await claimRyzeEvent(admin, input, eventKey);
     if (!claimed) return { status: "duplicate" };
+    try {
+      const result = await processRyzeEvent(admin, input);
+      await finishRyzeEvent(admin, input, eventKey, "processed");
+      return result;
+    } catch (error) {
+      await finishRyzeEvent(admin, input, eventKey, "failed");
+      throw error;
+    }
   }
+  return processRyzeEvent(admin, input);
+}
 
+async function processRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput): Promise<RyzeIngestResult> {
   if (input.envelope.event === "message.status") return updateRyzeMessageStatus(admin, input);
-  if (input.envelope.event !== "message.exchange") {
-    return { status: "ignored", reason: "evento_ryze_nao_processavel" };
-  }
+  if (input.envelope.event !== "message.exchange") return { status: "ignored", reason: "evento_ryze_nao_processavel" };
   if (input.envelope.data.message.direction === "outgoing") return reconcileRyzeOutgoing(admin, input);
   return insertRyzeIncoming(admin, { ...input, envelope: input.envelope });
 }
 
 async function claimRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string): Promise<boolean> {
-  const result = await admin
-    .from("ryze_webhook_events")
-    .insert({
-      organization_id: input.organizationId,
-      channel_session_id: input.channelSessionId,
-      event_id: eventId,
-      event_type: input.envelope.event,
-    })
-    .select("event_id")
+  const inserted = await admin.from("ryze_webhook_events").insert({
+    organization_id: input.organizationId,
+    channel_session_id: input.channelSessionId,
+    event_id: eventId,
+    event_type: input.envelope.event,
+    state: "processing",
+  }).select("event_id").maybeSingle();
+  if (!inserted.error) return true;
+  if ((inserted.error as DbError)?.code !== "23505") throw new Error("ryze_event_dedupe_failed");
+
+  const current = await admin.from("ryze_webhook_events")
+    .select("state,locked_until")
+    .eq("organization_id", input.organizationId)
+    .eq("channel_session_id", input.channelSessionId)
+    .eq("event_id", eventId)
     .maybeSingle();
-  if ((result.error as DbError)?.code === "23505") return false;
-  if (result.error) throw new Error("ryze_event_dedupe_failed");
+  const row = current.data as { state?: string; locked_until?: string } | null;
+  if (row?.state === "processed") return false;
+  if (row?.state === "processing" && row.locked_until && new Date(row.locked_until).getTime() > Date.now()) return false;
+
+  const reclaimed = await admin.from("ryze_webhook_events").update({
+    state: "processing",
+    attempts: 1,
+    locked_until: new Date(Date.now() + 5 * 60_000).toISOString(),
+    last_error_code: null,
+  }).eq("organization_id", input.organizationId).eq("channel_session_id", input.channelSessionId)
+    .eq("event_id", eventId).in("state", ["failed", "processing"]);
+  if (reclaimed.error) throw new Error("ryze_event_reclaim_failed");
   return true;
+}
+
+async function finishRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string, state: "processed" | "failed"): Promise<void> {
+  await admin.from("ryze_webhook_events").update({
+    state,
+    completed_at: state === "processed" ? new Date().toISOString() : null,
+    locked_until: new Date().toISOString(),
+    last_error_code: state === "failed" ? "processing_failed" : null,
+  }).eq("organization_id", input.organizationId).eq("channel_session_id", input.channelSessionId).eq("event_id", eventId);
 }
 
 async function updateRyzeMessageStatus(admin: SupabaseClient, input: RyzeIngestInput): Promise<RyzeIngestResult> {
@@ -133,30 +169,55 @@ async function insertRyzeIncoming(admin: SupabaseClient, input: RyzeExchangeInpu
     metadata: { provider: "ryze", event_id: input.envelope.data.id ?? null },
   }).select("id").maybeSingle();
 
-  if (inserted.error?.code === "23505") return { status: "duplicate", conversationId };
+  if (inserted.error?.code === "23505") {
+    const existing = await admin.from("messages")
+      .select("id,conversation_id,contact_id,body")
+      .eq("organization_id", input.organizationId)
+      .eq("channel_session_id", input.channelSessionId)
+      .eq("external_id", externalId)
+      .maybeSingle();
+    const row = existing.data as { id?: string; conversation_id?: string; contact_id?: string; body?: string | null } | null;
+    if (row?.id && row.conversation_id && row.contact_id) {
+      await completarPosEntrada(admin, input, row.conversation_id, row.contact_id, row.id, row.body ?? "");
+      return { status: "duplicate", conversationId: row.conversation_id };
+    }
+    return { status: "duplicate", conversationId };
+  }
   if (inserted.error || !inserted.data) throw new Error("ryze_message_insert_failed");
   const messageId = (inserted.data as { id: string }).id;
   const preview = message.text ?? message.body ?? "";
 
-  // Depois do INSERT, efeitos são best-effort e idempotentes: retry não pode ficar preso em 500.
+  await completarPosEntrada(admin, input, conversationId, contactId, messageId, preview);
+  return { status: "ingested", conversationId, messageId };
+}
+
+async function completarPosEntrada(
+  admin: SupabaseClient,
+  input: RyzeExchangeInput,
+  conversationId: string,
+  contactId: string,
+  messageId: string,
+  preview: string,
+): Promise<void> {
   try {
-    await admin.rpc("fn_mark_conversation_message" as never, {
+    const marked = await admin.rpc("fn_mark_conversation_message" as never, {
       p_conv: conversationId, p_direction: "inbound", p_preview: preview, p_at: new Date().toISOString(),
     });
+    if (marked.error) throw new Error("ryze_conversation_mark_failed");
   } catch {
-    // A mensagem persistida é a fonte de verdade; a reconciliação posterior pode refazer o carimbo.
+    // A mensagem persistida continua disponível para a recuperação no próximo retry.
   }
   try {
     await aplicarEfeitosPosEntrada(admin, {
       organizationId: input.organizationId, contactId, conversationId, messageId,
-      channelSessionId: input.channelSessionId, texto: message.text ?? message.body ?? null,
+      channelSessionId: input.channelSessionId, texto: preview || null,
       nomeDoContato: null, origem: "ryze_webhook",
     });
   } catch {
-    // Nunca transformar falha pós-commit em reentrega impossível de recuperar.
+    // Efeitos são idempotentes e não podem transformar o webhook em retry storm.
   }
-  return { status: "ingested", conversationId, messageId };
 }
+
 
 function resolveRyzeIdentity(message: RyzeExchangeMessage): string | null {
   const raw = message.remoteJid ?? message.from ?? null;

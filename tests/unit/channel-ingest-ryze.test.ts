@@ -48,8 +48,19 @@ function adminFake(options: {
         calls.push({ op: "not", values: { operator, column, value } });
         return builder;
       },
-      select: async () => options.status ?? options.outgoing ?? { data: [{ id: "message-1" }], error: null },
-      maybeSingle: async () => ({ data: null, error: null }),
+      select() { return builder; },
+      then(resolve: (value: QueryResult) => unknown) {
+        return Promise.resolve(options.status ?? options.outgoing ?? { data: [{ id: "message-1" }], error: null }).then(resolve);
+      },
+      maybeSingle: async () => {
+        if (table === "ryze_webhook_events" && options.eventDuplicateAfterFirst && eventClaims > 1) {
+          return { data: { state: "processed", locked_until: new Date(Date.now() + 60_000).toISOString() }, error: null };
+        }
+        if (table === "messages" && options.insert?.error?.code === "23505") {
+          return { data: { id: "message-1", conversation_id: "conversation-1", contact_id: "contact-1", body: "Olá" }, error: null };
+        }
+        return { data: null, error: null };
+      },
     };
     return builder;
   });
@@ -96,7 +107,7 @@ describe("Ryze ingestão F4", () => {
     const result = await ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") });
 
     expect(result).toEqual({ status: "duplicate", conversationId: "conversation-1" });
-    expect(efeitos.aplicar).not.toHaveBeenCalled();
+    expect(efeitos.aplicar).toHaveBeenCalledTimes(1);
   });
 
   it("outgoing reconcilia mensagem existente sem criar contato, conversa ou IA", async () => {

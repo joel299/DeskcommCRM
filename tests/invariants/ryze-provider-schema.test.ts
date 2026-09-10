@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { sql } from "./gov-helpers";
 
 /**
- * Invariante de Banco do Provider RyzeAPI (`ryze-channel`).
+ * Invariante de Banco e Integração de Persistência do Provider RyzeAPI (`ryze-channel`).
  *
- * Valida a integridade do schema da tabela public.channel_sessions para o provider ryze
- * contra o Postgres efêmero que nasce de supabase/baseline.sql (scripts/test-db.sh).
+ * Valida a integridade do schema da tabela public.channel_sessions e as operações reais de banco
+ * para o provider ryze contra o Postgres efêmero que nasce de supabase/baseline.sql (scripts/test-db.sh).
  */
 
 function novaOrg(slug: string): string {
@@ -91,6 +91,45 @@ describe("0210 · schema e invariantes do provider ryze", () => {
       }),
     );
     expect(msg).toMatch(/idx_channel_sessions_ryze_instance_name_active/);
+  });
+
+  it("sessão ryze inserida via seam de persistência armazena bytea cifrado e permite update pelo id confiavel da org", () => {
+    const org = novaOrg(`inv-ryze-persist-${Date.now()}`);
+    const inst = `inst-persist-${Date.now()}`;
+    const tokenHex = `\\x${Buffer.from("tok_secret_123").toString("hex")}`;
+
+    // 1. Simula a persistência inicial (INSERT)
+    sql(`
+      insert into public.channel_sessions (organization_id, provider, ryze_instance_name, ryze_token_encrypted, webhook_secret_encrypted)
+      values ('${org}', 'ryze', '${inst}', '${tokenHex}'::bytea, '\\x00'::bytea);
+    `);
+
+    const insertedCipher = sql(`
+      select encode(ryze_token_encrypted, 'hex')
+        from public.channel_sessions
+       where organization_id = '${org}' and ryze_instance_name = '${inst}' and archived_at is null
+    `).trim();
+    expect(insertedCipher).toBe(Buffer.from("tok_secret_123").toString("hex"));
+
+    // 2. Simula a atualização (UPDATE por id confiável da org)
+    const sessionId = sql(`
+      select id from public.channel_sessions
+       where organization_id = '${org}' and ryze_instance_name = '${inst}' and archived_at is null
+    `).trim();
+
+    const newTokenHex = `\\x${Buffer.from("tok_secret_updated_456").toString("hex")}`;
+    sql(`
+      update public.channel_sessions
+         set ryze_token_encrypted = '${newTokenHex}'::bytea, updated_at = now()
+       where id = '${sessionId}' and organization_id = '${org}';
+    `);
+
+    const updatedCipher = sql(`
+      select encode(ryze_token_encrypted, 'hex')
+        from public.channel_sessions
+       where id = '${sessionId}'
+    `).trim();
+    expect(updatedCipher).toBe(Buffer.from("tok_secret_updated_456").toString("hex"));
   });
 
   it("sessões legadas (waha, meta_cloud, zernio) continuam válidas e protegidas pelas constraints", () => {

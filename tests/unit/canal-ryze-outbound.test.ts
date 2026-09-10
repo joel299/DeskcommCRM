@@ -279,8 +279,8 @@ describe("adapter outbound ryze & control plane (F3)", () => {
         maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
         insert: fakeInsert,
         rpc: vi.fn()
-          .mockResolvedValueOnce({ data: "\\x746f6b656e_cipher", error: null })
-          .mockResolvedValueOnce({ data: "\\x776562686f6f6b_cipher", error: null }),
+          .mockResolvedValueOnce({ data: "\\x776562686f6f6b_cipher", error: null })
+          .mockResolvedValueOnce({ data: "\\x746f6b656e_cipher", error: null }),
       } as any;
 
       await provisionRyzeInstance({ organizationId: "org-cipher", instanceName: "inst-cipher", db: fakeDb });
@@ -291,11 +291,12 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       }));
       expect(JSON.stringify(fakeInsert.mock.calls[0]?.[0])).not.toContain("instance-token");
     });
-    it("falha fechado na segunda cifragem quando o webhook secret não pode ser cifrado", async () => {
+    it("falha antes do CREATE quando a cifragem prévia do webhook secret falha", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
-      vi.stubGlobal("fetch", vi.fn()
+      const mockFetch = vi.fn()
         .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instances: [] }) })
-        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instance: { name: "inst-webhook-fail", token: "instance-token" } }) }));
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instance: { name: "inst-webhook-fail", token: "instance-token" } }) });
+      vi.stubGlobal("fetch", mockFetch);
 
       const fakeInsert = vi.fn();
       const fakeUpdate = vi.fn();
@@ -308,7 +309,6 @@ describe("adapter outbound ryze & control plane (F3)", () => {
         insert: fakeInsert,
         update: fakeUpdate,
         rpc: vi.fn()
-          .mockResolvedValueOnce({ data: "\\x746f6b656e_cipher", error: null })
           .mockResolvedValueOnce({ data: null, error: { message: "webhook encryption failed" } }),
       } as any;
 
@@ -320,7 +320,39 @@ describe("adapter outbound ryze & control plane (F3)", () => {
 
       expect(fakeInsert).not.toHaveBeenCalled();
       expect(fakeUpdate).not.toHaveBeenCalled();
+      expect(mockFetch.mock.calls.filter(([url]) => String(url).includes("/api/instance/create"))).toHaveLength(0);
       expect(JSON.stringify(fakeInsert.mock.calls)).not.toContain("instance-token");
+    });
+    it("recupera após falha de persistência sem executar CREATE novamente quando LIST retorna TokenInstance", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instances: [] }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instance: { name: "inst-recover", token: "created-token" } }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instances: [{ name: "inst-recover", token: "recovered-token" }] }) });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const fakeInsert = vi.fn()
+        .mockResolvedValueOnce({ data: null, error: { message: "transient persistence failure" } })
+        .mockResolvedValueOnce({ data: { id: "sess-recovered" }, error: null });
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        insert: fakeInsert,
+        rpc: vi.fn()
+          .mockResolvedValueOnce({ data: "\\x776562_pre", error: null })
+          .mockResolvedValueOnce({ data: "\\x746f6b_created", error: null })
+          .mockResolvedValueOnce({ data: "\\x746f6b_recovered", error: null })
+          .mockResolvedValueOnce({ data: "\\x776562_retry", error: null }),
+      } as any;
+
+      await expect(provisionRyzeInstance({ organizationId: "org-recover", instanceName: "inst-recover", db: fakeDb })).rejects.toThrow("ryze_session_persistence_failed");
+      await expect(provisionRyzeInstance({ organizationId: "org-recover", instanceName: "inst-recover", db: fakeDb })).resolves.toEqual({ instanceName: "inst-recover", isNew: false });
+
+      expect(mockFetch.mock.calls.filter(([url]) => String(url).includes("/api/instance/create"))).toHaveLength(1);
+      expect(fakeInsert).toHaveBeenCalledTimes(2);
     });
     it("reexecucao sequencial (repeated provision) e estritamente idempotente (segundo cycle tem zero chamadas de CREATE)", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";

@@ -291,6 +291,37 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       }));
       expect(JSON.stringify(fakeInsert.mock.calls[0]?.[0])).not.toContain("instance-token");
     });
+    it("falha fechado na segunda cifragem quando o webhook secret não pode ser cifrado", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+      vi.stubGlobal("fetch", vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instances: [] }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instance: { name: "inst-webhook-fail", token: "instance-token" } }) }));
+
+      const fakeInsert = vi.fn();
+      const fakeUpdate = vi.fn();
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        insert: fakeInsert,
+        update: fakeUpdate,
+        rpc: vi.fn()
+          .mockResolvedValueOnce({ data: "\\x746f6b656e_cipher", error: null })
+          .mockResolvedValueOnce({ data: null, error: { message: "webhook encryption failed" } }),
+      } as any;
+
+      await expect(provisionRyzeInstance({
+        organizationId: "org-webhook-fail",
+        instanceName: "inst-webhook-fail",
+        db: fakeDb,
+      })).rejects.toThrow("ryze_control_webhook_encrypt_failed");
+
+      expect(fakeInsert).not.toHaveBeenCalled();
+      expect(fakeUpdate).not.toHaveBeenCalled();
+      expect(JSON.stringify(fakeInsert.mock.calls)).not.toContain("instance-token");
+    });
     it("reexecucao sequencial (repeated provision) e estritamente idempotente (segundo cycle tem zero chamadas de CREATE)", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
 

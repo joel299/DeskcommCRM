@@ -1890,7 +1890,19 @@ CREATE TABLE IF NOT EXISTS "public"."webhook_events_log" (
 );
 
 
+CREATE TABLE IF NOT EXISTS "public"."ryze_webhook_events" (
+    "organization_id" uuid NOT NULL,
+    "channel_session_id" uuid NOT NULL,
+    "event_id" text NOT NULL,
+    "event_type" text NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "ryze_webhook_events_pkey" PRIMARY KEY ("organization_id", "channel_session_id", "event_id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_ryze_webhook_events_created_at" ON "public"."ryze_webhook_events" USING "btree" ("created_at" DESC);
+
 ALTER TABLE "public"."webhook_events_log" OWNER TO "postgres";
+
 
 
 DO $baseline_guard$ BEGIN

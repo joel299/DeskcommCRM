@@ -37,7 +37,7 @@ import {
   fecharArquivoDoWebhook,
   sanitizarCorpoDoWebhook,
 } from "@/lib/channels/arquivo-de-webhook";
-import { acceptsInboundWebhook, handleInboundWebhook } from "@/lib/channels/inbound";
+import { acceptsInboundWebhook, handleInboundWebhook, mensagemSeguraDoInbound } from "@/lib/channels/inbound";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptWebhookSecret } from "@/lib/webhooks/secrets";
 
@@ -138,27 +138,24 @@ export async function POST(
     }
 
     const status = r.code === "unauthorized" ? 401 : 400;
+    const mensagemPublica = mensagemSeguraDoInbound(sessao.provider, r.code, r.message);
     await fecharArquivoDoWebhook(admin, arquivo, {
       status: "error",
-      // `false` SÓ quando a recusa foi por assinatura. Um payload bem assinado
-      // que o parser recusou não é problema de segredo, e marcá-lo como se
-      // fosse mandaria quem investiga procurar no lugar errado.
       validSignature: r.code === "unauthorized" ? false : null,
-      erro: r.message,
+      erro: mensagemPublica,
     });
     return fail(
       r.code === "unauthorized" ? "unauthorized" : "invalid_request",
-      r.message,
+      mensagemPublica,
       status,
       { requestId },
     );
-  } catch (err) {
-    const detalhe = err instanceof Error ? err.message : "ingest_failed";
+  } catch {
     await fecharArquivoDoWebhook(admin, arquivo, {
       status: "error",
       validSignature: null,
-      erro: detalhe,
+      erro: "ingest_failed",
     });
-    return fail("internal_error", detalhe, 500, { requestId });
+    return fail("internal_error", "ingest_failed", 500, { requestId });
   }
 }

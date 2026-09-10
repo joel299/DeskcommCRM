@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptWebhookSecret } from "@/lib/webhooks/secrets";
 import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
@@ -75,9 +76,10 @@ export async function persistRyzeSession(
     organizationId: string;
     instanceName: string;
     encryptedToken: string;
+    webhookSecretEncrypted?: string;
   }
 ): Promise<{ id?: string; action: "inserted" | "updated" }> {
-  const { organizationId, instanceName, encryptedToken } = params;
+  const { organizationId, instanceName, encryptedToken, webhookSecretEncrypted } = params;
 
   const { data: existingSession } = await db
     .from("channel_sessions")
@@ -102,23 +104,27 @@ export async function persistRyzeSession(
       throw new Error(`ryze_session_persistence_failed: ${updateErr.message}`);
     }
     return { id: existingSession.id, action: "updated" };
-  } else {
-    const { error: insertErr } = await db
-      .from("channel_sessions")
-      .insert({
-        organization_id: organizationId,
-        provider: "ryze",
-        ryze_instance_name: instanceName,
-        ryze_token_encrypted: encryptedToken,
-        status: "active",
-        updated_at: new Date().toISOString(),
-      });
-
-    if (insertErr) {
-      throw new Error(`ryze_session_persistence_failed: ${insertErr.message}`);
-    }
-    return { action: "inserted" };
   }
+
+  if (!webhookSecretEncrypted) {
+    throw new Error("ryze_webhook_secret_required: nova sessao exige webhook secret cifrado");
+  }
+
+  const { error: insertErr } = await db
+    .from("channel_sessions")
+    .insert({
+      organization_id: organizationId,
+      provider: "ryze",
+      ryze_instance_name: instanceName,
+      ryze_token_encrypted: encryptedToken,
+      webhook_secret_encrypted: webhookSecretEncrypted,
+      metadata: {},
+    });
+
+  if (insertErr) {
+    throw new Error(`ryze_session_persistence_failed: ${insertErr.message}`);
+  }
+  return { action: "inserted" };
 }
 
 /**
@@ -199,10 +205,16 @@ export async function provisionRyzeInstance(params: {
     }
   }
 
-  // 2. Criptografia obrigatória com fail-closed antes de qualquer escrita no banco
+  // 2. Cifrar TokenInstance e, para uma nova sessão, gerar e cifrar webhook secret real.
   const encryptedToken = await encryptWebhookSecret(db, tokenInstance);
   if (!encryptedToken) {
     throw new Error("ryze_control_encrypt_failed: falha ao criptografar TokenInstance");
+  }
+
+  const webhookSecret = randomBytes(32).toString("base64url");
+  const webhookSecretEncrypted = await encryptWebhookSecret(db, webhookSecret) ?? undefined;
+  if (!webhookSecretEncrypted) {
+    throw new Error("ryze_control_webhook_encrypt_failed: falha ao criptografar webhook secret");
   }
 
   // 3. Persistência tenant-aware via módulo isolado de persistência
@@ -210,6 +222,7 @@ export async function provisionRyzeInstance(params: {
     organizationId,
     instanceName,
     encryptedToken,
+    webhookSecretEncrypted,
   });
 
   return { instanceName, isNew };

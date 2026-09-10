@@ -312,6 +312,7 @@ describe("adapter outbound ryze & control plane (F3)", () => {
         organizationId: "org-test",
         instanceName: "inst-test",
         encryptedToken: "\\x1234",
+        webhookSecretEncrypted: "\\xwebhook",
       });
       expect(resInsert.action).toBe("inserted");
       expect(mockInsert).toHaveBeenCalledWith(
@@ -319,6 +320,8 @@ describe("adapter outbound ryze & control plane (F3)", () => {
           organization_id: "org-test",
           provider: "ryze",
           ryze_instance_name: "inst-test",
+          webhook_secret_encrypted: "\\xwebhook",
+          metadata: {},
         })
       );
 

@@ -240,6 +240,57 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       expect(fakeUpdate).not.toHaveBeenCalled();
     });
 
+    it("falha fechado quando lookup tenant-aware retorna erro e não tenta INSERT/UPDATE", async () => {
+      const fakeInsert = vi.fn();
+      const fakeUpdate = vi.fn();
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: "db unavailable" } }),
+        insert: fakeInsert,
+        update: fakeUpdate,
+      } as any;
+
+      await expect(persistRyzeSession(fakeDb, {
+        organizationId: "org-fail-closed",
+        instanceName: "inst-fail-closed",
+        encryptedToken: "\\x1234",
+        webhookSecretEncrypted: "\\xwebhook",
+      })).rejects.toThrow("ryze_session_lookup_failed");
+
+      expect(fakeInsert).not.toHaveBeenCalled();
+      expect(fakeUpdate).not.toHaveBeenCalled();
+    });
+
+    it("usa o ciphertext retornado pelo helper de criptografia no INSERT e não o plaintext gerado", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+      vi.stubGlobal("fetch", vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instances: [] }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instance: { name: "inst-cipher", token: "instance-token" } }) }));
+
+      const fakeInsert = vi.fn().mockResolvedValue({ data: { id: "sess-cipher" }, error: null });
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        insert: fakeInsert,
+        rpc: vi.fn()
+          .mockResolvedValueOnce({ data: "\\x746f6b656e_cipher", error: null })
+          .mockResolvedValueOnce({ data: "\\x776562686f6f6b_cipher", error: null }),
+      } as any;
+
+      await provisionRyzeInstance({ organizationId: "org-cipher", instanceName: "inst-cipher", db: fakeDb });
+
+      expect(fakeInsert).toHaveBeenCalledWith(expect.objectContaining({
+        ryze_token_encrypted: "\\x746f6b656e_cipher",
+        webhook_secret_encrypted: "\\x776562686f6f6b_cipher",
+      }));
+      expect(JSON.stringify(fakeInsert.mock.calls[0]?.[0])).not.toContain("instance-token");
+    });
     it("reexecucao sequencial (repeated provision) e estritamente idempotente (segundo cycle tem zero chamadas de CREATE)", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
 
@@ -269,8 +320,10 @@ describe("adapter outbound ryze & control plane (F3)", () => {
 
       const fakeInsert = vi.fn().mockResolvedValue({ data: { id: "sess-1" }, error: null });
       const fakeSelect = vi.fn()
-        .mockResolvedValueOnce({ data: null, error: null }) // 1º cycle: não existe no DB
-        .mockResolvedValueOnce({ data: { id: "sess-1" }, error: null }); // 2º cycle: existe no DB
+        .mockResolvedValueOnce({ data: null, error: null }) // 1º cycle: lookup do provisionamento
+        .mockResolvedValueOnce({ data: null, error: null }) // 1º cycle: lookup da persistência
+        .mockResolvedValueOnce({ data: { id: "sess-1" }, error: null }) // 2º cycle: lookup do provisionamento
+        .mockResolvedValueOnce({ data: { id: "sess-1" }, error: null }); // 2º cycle: lookup da persistência
 
       const fakeDb = {
         from: vi.fn().mockReturnThis(),

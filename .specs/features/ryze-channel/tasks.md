@@ -25,8 +25,8 @@
 - [x] **Task 3: Adapter Outbound (F3)**
   - Requisito: RYZE-002, RYZE-005, RYZE-006, RYZE-014
   - Arquivos: `lib/channels/adapters/ryze.ts`, `lib/channels/ryze/credentials.ts`, `lib/channels/index.ts`, `tests/unit/canal-ryze-outbound.test.ts`
-  - Verificação: Testes RED/GREEN para envio de texto, mídia, reply, isolamento multi-tenant e tratamento de erros sem vazamento de tokens. (PASS 10/10)
-  - Status: COMPLETO (Entregue e submetido para gate F3)
+  - Verificação: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, `pnpm vitest run tests/unit/canal-ryze-outbound.test.ts tests/unit/canal-ryze-vocabulario.test.ts tests/unit/channel-capability-matrix.test.ts` (PASS 24/24), `bash scripts/test-db.sh tests/invariants/ryze-provider-schema.test.ts` (PASS 7/7), incluindo persistência real pelo seam `persistRyzeSession`, lookup fail-closed e não-regeneração de webhook secret em UPDATE.
+  - Status: COMPLETO (implementação e correções do gate F3 concluídas; aguardando aprovação externa no Linear)
 
 - [ ] **Task 4: Inbound + Sanitização P0 + Idempotência (F4)**
   - Requisito: RYZE-007, RYZE-008, RYZE-009, RYZE-010, RYZE-011, RYZE-012, RYZE-013

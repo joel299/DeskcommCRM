@@ -18,7 +18,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { CHANNEL_PROVIDER_ZERNIO } from "./capabilities";
+import { CHANNEL_PROVIDER_RYZE, CHANNEL_PROVIDER_ZERNIO } from "./capabilities";
+import { verifyRyzeBearer } from "./ryze/webhook";
+import { lerEnvelopeRyze } from "./ryze/envelope";
 import { sincronizarSaudeDaConexao } from "./health";
 import {
   atualizarEspelhoDoTemplate,
@@ -70,7 +72,7 @@ export type InboundWebhookOutcome =
  * trabalho — e respondido sem nomear provider do lado de fora.
  */
 export function acceptsInboundWebhook(provider: string): boolean {
-  return provider === CHANNEL_PROVIDER_ZERNIO;
+  return provider === CHANNEL_PROVIDER_ZERNIO || provider === CHANNEL_PROVIDER_RYZE;
 }
 
 export async function handleInboundWebhook(
@@ -80,6 +82,8 @@ export async function handleInboundWebhook(
   const provider = input.session.provider as ChannelProvider;
 
   switch (provider) {
+    case CHANNEL_PROVIDER_RYZE:
+      return ryzeInbound(input);
     case CHANNEL_PROVIDER_ZERNIO:
       return zernioInbound(admin, input);
     default:
@@ -87,6 +91,29 @@ export async function handleInboundWebhook(
       // ataque — mas processar seria ler o payload com o parser errado.
       return { ok: false, code: "provider_mismatch", message: "canal não recebe por esta rota" };
   }
+}
+
+async function ryzeInbound(input: InboundWebhookInput): Promise<InboundWebhookOutcome> {
+  if (!verifyRyzeBearer(input.headers.get("authorization"), input.secret)) {
+    return { ok: false, code: "unauthorized", message: "bad_bearer" };
+  }
+
+  const leitura = lerEnvelopeRyze(input.rawBody);
+  if (!leitura.ok) {
+    return {
+      ok: false,
+      code: leitura.motivo === "json_invalido" ? "invalid_json" : "contrato_violado",
+      message: leitura.motivo === "json_invalido"
+        ? "invalid_json"
+        : `payload fora do contrato do canal: ${leitura.campos.join(", ")}`,
+    };
+  }
+
+  if (leitura.envelope.data.message.direction === "outgoing") {
+    return { ok: true, body: { status: "ignored", reason: "ryze_outgoing_reconciliation_pending" } };
+  }
+
+  return { ok: false, code: "provider_mismatch", message: "ryze_ingest_not_ready" };
 }
 
 async function zernioInbound(

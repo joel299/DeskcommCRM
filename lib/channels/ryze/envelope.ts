@@ -8,7 +8,7 @@ const instanceData = z.looseObject({
   baseUrl: z.string().optional(),
 });
 
-const message = z.looseObject({
+const exchangeMessage = z.looseObject({
   id: text.optional(),
   direction: z.enum(["incoming", "outgoing"]),
   status: z.string().optional(),
@@ -21,9 +21,24 @@ const message = z.looseObject({
   media: z.unknown().optional(),
 });
 
-const data = z.looseObject({
+const statusMessage = z.looseObject({
   id: text.optional(),
-  message,
+  status: z.string().optional(),
+  direction: z.enum(["incoming", "outgoing"]).optional(),
+  text: z.string().nullable().optional(),
+  body: z.string().nullable().optional(),
+  timestamp: z.union([z.string(), z.number()]).optional(),
+});
+
+const exchangeData = z.looseObject({
+  id: text.optional(),
+  message: exchangeMessage,
+  instanceData: instanceData.optional(),
+});
+
+const statusData = z.looseObject({
+  id: text.optional(),
+  message: statusMessage,
   instanceData: instanceData.optional(),
 });
 
@@ -34,12 +49,13 @@ const root = z.looseObject({
 });
 
 export const ryzeEnvelopeSchema = z.discriminatedUnion("event", [
-  z.looseObject({ event: z.literal("message.exchange"), data, instanceData: instanceData.optional() }),
-  z.looseObject({ event: z.literal("message.status"), data, instanceData: instanceData.optional() }),
+  z.looseObject({ event: z.literal("message.exchange"), data: exchangeData, instanceData: instanceData.optional() }),
+  z.looseObject({ event: z.literal("message.status"), data: statusData, instanceData: instanceData.optional() }),
 ]);
 
 export type RyzeEnvelope = z.infer<typeof ryzeEnvelopeSchema>;
 export type RyzeMessage = RyzeEnvelope["data"]["message"];
+export type RyzeExchangeMessage = Extract<RyzeEnvelope, { event: "message.exchange" }>["data"]["message"];
 export type RyzeWebhookParse =
   | { ok: true; kind: "supported"; envelope: RyzeEnvelope }
   | { ok: true; kind: "unsupported"; event: string }

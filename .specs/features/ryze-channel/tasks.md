@@ -33,8 +33,10 @@
   - Requisito: RYZE-007, RYZE-008, RYZE-009, RYZE-010, RYZE-011, RYZE-012, RYZE-013
   - Arquivos: `lib/channels/ryze/webhook.ts`, `lib/channels/ryze/envelope.ts`, `lib/channels/ryze/ingest.ts`, `lib/channels/inbound.ts`, `lib/channels/arquivo-de-webhook.ts`, `app/api/v1/webhooks/channel/[token]/route.ts`, `supabase/migrations/20260910220000_0211_ryze_webhook_log.sql`, `supabase/baseline.sql`, `supabase/migrations/MANIFEST.md`, `.specs/features/ryze-channel/context-manifest.json`, `tests/unit/ryze-f4-contract.test.ts`, `tests/unit/contrato-do-webhook-zernio.test.ts`
   - Verificação inicial: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, contrato F4 + regressão Zernio (20/20), invariantes Postgres Ryze (7/7).
+  - Implementação atual: `lib/channels/ryze/ingest.ts` processa `incoming`, reconcilia `outgoing` sem inserir e atualiza `message.status` sem criar mensagem; efeitos pós-entrada só rodam após insert novo.
+  - Teste adicional: `tests/unit/channel-ingest-ryze.test.ts` cobre incoming, duplicate 23505, outgoing sem IA e status sem insert.
   - Correções do checkpoint: sanitização root/nested de `instanceData`, comprimento mínimo do Bearer, eventos não suportados respondem `200 ignored`, chaves de evento/mensagem/status separadas e governança reconciliada para GRU-35.
-  - Status: EM IMPLEMENTAÇÃO; ingestão `incoming`, reconciliação `outgoing` e `message.status` ainda pendentes.
+  - Status: EM IMPLEMENTAÇÃO; validação de rota/E2E e governança global ainda pendentes.
 
 - [ ] **Task 5: E2E + Regressão de Provedores (F5)**
   - Requisito: RYZE-015, RYZE-018

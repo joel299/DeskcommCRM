@@ -318,6 +318,33 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       await run({ success: false, data: { token: "ignored-token" } });
       await run({ success: true, instance: { name: "inst-shape" } });
     });
+    it("congela o contract-test do CREATE não idempotente e falha fechado em resposta non-JSON", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "TOKEN_ACCOUNT_SYNTHETIC";
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, instances: [] }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error("non-json"); } });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const fakeInsert = vi.fn();
+      const fakeUpdate = vi.fn();
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }), insert: fakeInsert, update: fakeUpdate,
+        rpc: vi.fn().mockResolvedValue({ data: "\\x636970686572", error: null }),
+      } as any;
+
+      await expect(provisionRyzeInstance({ organizationId: "org-contract", instanceName: "inst-contract", db: fakeDb })).rejects.toThrow("ryze_instance_create_invalid_response");
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(2, "https://ryzeapi.cloud/api/instance/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", token: "TOKEN_ACCOUNT_SYNTHETIC" },
+        body: JSON.stringify({ name: "inst-contract" }),
+      });
+      expect(mockFetch.mock.calls.filter(([url]) => String(url).includes("/api/instance/create"))).toHaveLength(0);
+      expect(fakeInsert).not.toHaveBeenCalled();
+      expect(fakeUpdate).not.toHaveBeenCalled();
+    });
     it("falha antes do CREATE quando a cifragem prévia do webhook secret falha", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
       const mockFetch = vi.fn()

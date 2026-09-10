@@ -89,6 +89,42 @@ describe("0087 · o canal da sessão chega ao clone", () => {
     expect(msg).toMatch(/channel_sessions_provider_ref_check/);
   });
 
+  it("sessão ryze sem ryze_instance_name é RECUSADA pelo banco", () => {
+    const org = novaOrg(`inv-ryze-a-${Date.now()}`);
+    const msg = erroDe(() =>
+      insertSession(org, { provider: `'ryze'`, waha_session_name: "null" }),
+    );
+    expect(msg).toMatch(/channel_sessions_provider_ref_check/);
+  });
+
+  it("sessão ryze com ryze_instance_name válido é ACEITA pelo banco", () => {
+    const org = novaOrg(`inv-ryze-b-${Date.now()}`);
+    const res = insertSession(org, {
+      provider: `'ryze'`,
+      waha_session_name: "null",
+      ryze_instance_name: `'instancia-ryze-${Date.now()}'`,
+    });
+    expect(res).toContain("ok");
+  });
+
+  it("duplicidade de ryze_instance_name em sessões ativas é RECUSADA pelo índice único parcial", () => {
+    const org = novaOrg(`inv-ryze-c-${Date.now()}`);
+    const instanceName = `'instancia-dup-${Date.now()}'`;
+    insertSession(org, {
+      provider: `'ryze'`,
+      waha_session_name: "null",
+      ryze_instance_name: instanceName,
+    });
+    const msg = erroDe(() =>
+      insertSession(org, {
+        provider: `'ryze'`,
+        waha_session_name: "null",
+        ryze_instance_name: instanceName,
+      }),
+    );
+    expect(msg).toMatch(/idx_channel_sessions_ryze_instance_name_active/);
+  });
+
   it("sessão waha sem waha_session_name é RECUSADA — a união vale nos DOIS ramos", () => {
     // O ramo simétrico não é zelo: `drop not null` acabou de tirar a proteção que
     // existia aqui, e sem esta asserção a migration teria AFROUXADO o waha em

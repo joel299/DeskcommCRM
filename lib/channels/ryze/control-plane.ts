@@ -67,6 +67,24 @@ export async function listRyzeInstances(options?: {
   return json.instances;
 }
 
+export async function lookupRyzeSession(
+  db: SupabaseClient,
+  organizationId: string,
+  instanceName: string,
+): Promise<{ id: string | null; error: string | null }> {
+  const { data, error } = await db
+    .from("channel_sessions")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("provider", "ryze")
+    .eq("ryze_instance_name", instanceName)
+    .is("archived_at", null)
+    .maybeSingle();
+
+  if (error) return { id: null, error: "lookup_failed" };
+  return { id: data?.id ?? null, error: null };
+}
+
 /**
  * Persiste a sessão do tenant de forma explícita e isolada (INSERT se nova, UPDATE por ID confiável se existente).
  */
@@ -81,29 +99,26 @@ export async function persistRyzeSession(
 ): Promise<{ id?: string; action: "inserted" | "updated" }> {
   const { organizationId, instanceName, encryptedToken, webhookSecretEncrypted } = params;
 
-  const { data: existingSession } = await db
-    .from("channel_sessions")
-    .select("id")
-    .eq("organization_id", organizationId)
-    .eq("provider", "ryze")
-    .eq("ryze_instance_name", instanceName)
-    .is("archived_at", null)
-    .maybeSingle();
+  const { id: existingSessionId, error: lookupErr } = await lookupRyzeSession(db, organizationId, instanceName);
 
-  if (existingSession?.id) {
+  if (lookupErr) {
+    throw new Error("ryze_session_lookup_failed: falha ao consultar sessao existente");
+  }
+
+  if (existingSessionId) {
     const { error: updateErr } = await db
       .from("channel_sessions")
       .update({
         ryze_token_encrypted: encryptedToken,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", existingSession.id)
+      .eq("id", existingSessionId)
       .eq("organization_id", organizationId);
 
     if (updateErr) {
       throw new Error(`ryze_session_persistence_failed: ${updateErr.message}`);
     }
-    return { id: existingSession.id, action: "updated" };
+    return { id: existingSessionId, action: "updated" };
   }
 
   if (!webhookSecretEncrypted) {
@@ -211,10 +226,18 @@ export async function provisionRyzeInstance(params: {
     throw new Error("ryze_control_encrypt_failed: falha ao criptografar TokenInstance");
   }
 
-  const webhookSecret = randomBytes(32).toString("base64url");
-  const webhookSecretEncrypted = await encryptWebhookSecret(db, webhookSecret) ?? undefined;
-  if (!webhookSecretEncrypted) {
-    throw new Error("ryze_control_webhook_encrypt_failed: falha ao criptografar webhook secret");
+  const sessionLookup = await lookupRyzeSession(db, organizationId, instanceName);
+  if (sessionLookup.error) {
+    throw new Error("ryze_session_lookup_failed: falha ao consultar sessao existente");
+  }
+
+  let webhookSecretEncrypted: string | undefined;
+  if (!sessionLookup.id) {
+    const webhookSecret = randomBytes(32).toString("base64url");
+    webhookSecretEncrypted = await encryptWebhookSecret(db, webhookSecret) ?? undefined;
+    if (!webhookSecretEncrypted) {
+      throw new Error("ryze_control_webhook_encrypt_failed: falha ao criptografar webhook secret");
+    }
   }
 
   // 3. Persistência tenant-aware via módulo isolado de persistência

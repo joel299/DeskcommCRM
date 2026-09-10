@@ -25,7 +25,7 @@
 - [x] **Task 3: Adapter Outbound (F3)**
   - Requisito: RYZE-002, RYZE-005, RYZE-006, RYZE-014
   - Arquivos: `lib/channels/adapters/ryze.ts`, `lib/channels/ryze/credentials.ts`, `lib/channels/ryze/control-plane.ts`, `lib/channels/index.ts`, `tests/unit/canal-ryze-outbound.test.ts`, `tests/invariants/ryze-provider-schema.test.ts`, `.specs/features/ryze-channel/tasks.md`
-  - Verificação: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, `pnpm vitest run tests/unit/canal-ryze-outbound.test.ts tests/unit/canal-ryze-vocabulario.test.ts tests/unit/channel-capability-matrix.test.ts` (PASS 27/27), `bash scripts/test-db.sh tests/invariants/ryze-provider-schema.test.ts` (PASS 7/7), incluindo persistência real pelo seam `persistRyzeSession`, lookup fail-closed, cadeia de duas cifragens e não-regeneração de webhook secret em UPDATE.
+  - Verificação: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, `pnpm vitest run tests/unit/canal-ryze-outbound.test.ts tests/unit/canal-ryze-vocabulario.test.ts tests/unit/channel-capability-matrix.test.ts` (PASS 28/28), `bash scripts/test-db.sh tests/invariants/ryze-provider-schema.test.ts` (PASS 7/7), incluindo persistência real pelo seam `persistRyzeSession`, lookup fail-closed, cifragem prévia do webhook secret antes de CREATE, recuperação pós-falha por LIST com TokenInstance retornável, zero CREATE no retry e não-regeneração de webhook secret em UPDATE.
   - Status: COMPLETO (implementação e correções do gate F3 concluídas; aguardando aprovação externa no Linear)
 
 - [ ] **Task 4: Inbound + Sanitização P0 + Idempotência (F4)**

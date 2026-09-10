@@ -167,6 +167,7 @@ export async function provisionRyzeInstance(params: {
 
   let tokenInstance: string | undefined;
   let isNew = false;
+  let webhookSecretEncrypted: string | undefined;
 
   if (existing) {
     // Instância JÁ EXISTE no plano de controle -> JAMAIS disparar create
@@ -190,6 +191,13 @@ export async function provisionRyzeInstance(params: {
       throw new Error("ryze_existing_instance_token_unavailable: a instancia ja existe no plano de controle mas o token nao esta disponivel para re-vinculo");
     }
   } else {
+    // Pré-cifrar antes do efeito externo: falha de webhook não pode consumir a única instância.
+    const webhookSecret = randomBytes(32).toString("base64url");
+    webhookSecretEncrypted = await encryptWebhookSecret(db, webhookSecret) ?? undefined;
+    if (!webhookSecretEncrypted) {
+      throw new Error("ryze_control_webhook_encrypt_failed: falha ao criptografar webhook secret");
+    }
+
     // Instância NÃO existe -> Criar UMA instância
     const createRes = await fetch(`${baseUrl}/api/instance/create`, {
       method: "POST",
@@ -231,8 +239,7 @@ export async function provisionRyzeInstance(params: {
     throw new Error("ryze_session_lookup_failed: falha ao consultar sessao existente");
   }
 
-  let webhookSecretEncrypted: string | undefined;
-  if (!sessionLookup.id) {
+  if (!sessionLookup.id && !webhookSecretEncrypted) {
     const webhookSecret = randomBytes(32).toString("base64url");
     webhookSecretEncrypted = await encryptWebhookSecret(db, webhookSecret) ?? undefined;
     if (!webhookSecretEncrypted) {

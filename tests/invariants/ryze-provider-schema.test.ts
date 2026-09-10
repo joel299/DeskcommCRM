@@ -74,16 +74,17 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     expect(res).toContain("ok");
   });
 
-  it("duplicidade de ryze_instance_name em sessões ativas é RECUSADA pelo índice único parcial", () => {
-    const org = novaOrg(`inv-ryze-dup-${Date.now()}`);
+  it("duplicidade de ryze_instance_name em sessões ativas é RECUSADA pelo índice único parcial (mesma org ou cross-tenant)", () => {
+    const org1 = novaOrg(`inv-ryze-dup1-${Date.now()}`);
+    const org2 = novaOrg(`inv-ryze-dup2-${Date.now()}`);
     const instanceName = `'instancia-dup-${Date.now()}'`;
-    insertSession(org, {
+    insertSession(org1, {
       provider: `'ryze'`,
       waha_session_name: "null",
       ryze_instance_name: instanceName,
     });
     const msg = erroDe(() =>
-      insertSession(org, {
+      insertSession(org2, {
         provider: `'ryze'`,
         waha_session_name: "null",
         ryze_instance_name: instanceName,

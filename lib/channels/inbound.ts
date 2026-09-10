@@ -68,6 +68,13 @@ export type InboundWebhookOutcome =
       message: string;
     };
 
+export function mensagemSeguraDoInbound(provider: string, code: Extract<InboundWebhookOutcome, { ok: false }>["code"], message: string): string {
+  if (provider !== CHANNEL_PROVIDER_RYZE) return message;
+  if (code === "unauthorized") return "webhook_unauthorized";
+  if (code === "invalid_json") return "payload_invalid_json";
+  return "payload_contract_invalid";
+}
+
 /**
  * Este canal sabe receber webhook? Perguntado pela rota ANTES de qualquer
  * trabalho — e respondido sem nomear provider do lado de fora.

@@ -12,7 +12,9 @@ function adminFake(options: {
   insert?: QueryResult;
   status?: QueryResult;
   outgoing?: QueryResult;
+  eventDuplicateAfterFirst?: boolean;
 } = {}) {
+  let eventClaims = 0;
   const calls: Array<{ op: string; table?: string; values?: unknown }> = [];
   const rpc = vi.fn(async (name: string) => {
     calls.push({ op: name });
@@ -26,7 +28,15 @@ function adminFake(options: {
       insert(values: unknown) {
         calls.push({ op: "insert", table, values });
         return {
-          select: () => ({ maybeSingle: async () => options.insert ?? { data: { id: "message-1" }, error: null } }),
+          select: () => ({ maybeSingle: async () => {
+            if (table === "ryze_webhook_events") {
+              eventClaims += 1;
+              return options.eventDuplicateAfterFirst && eventClaims > 1
+                ? { data: null, error: { code: "23505", message: "duplicate event" } }
+                : { data: null, error: null };
+            }
+            return options.insert ?? { data: { id: "message-1" }, error: null };
+          } }),
         };
       },
       update(values: unknown) {
@@ -34,7 +44,10 @@ function adminFake(options: {
         return builder;
       },
       eq() { return builder; },
-      not() { return builder; },
+      not(operator: string, column: string, value: string) {
+        calls.push({ op: "not", values: { operator, column, value } });
+        return builder;
+      },
       select: async () => options.status ?? options.outgoing ?? { data: [{ id: "message-1" }], error: null },
       maybeSingle: async () => ({ data: null, error: null }),
     };
@@ -109,8 +122,39 @@ describe("Ryze ingestão F4", () => {
     });
 
     expect(result).toEqual({ status: "ignored", reason: "mensagem_desconhecida" });
-    expect(calls.some((call) => call.op === "insert")).toBe(false);
+    expect(calls.some((call) => call.op === "insert" && call.table === "messages")).toBe(false);
     expect(calls.some((call) => call.op === "fn_upsert_wa_contact")).toBe(false);
     expect(efeitos.aplicar).not.toHaveBeenCalled();
+  });
+
+  it("deduplica reentrega pelo mesmo data.id e executa efeitos uma vez", async () => {
+    efeitos.aplicar.mockClear();
+    const { admin, calls } = adminFake({ eventDuplicateAfterFirst: true });
+    const first = await ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") });
+    const second = await ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") });
+
+    expect(first.status).toBe("ingested");
+    expect(second.status).toBe("duplicate");
+    expect(efeitos.aplicar).toHaveBeenCalledTimes(1);
+    expect(calls.filter((call) => call.op === "insert" && call.table === "messages")).toHaveLength(1);
+  });
+
+  it("echo outgoing protege estados terminais e failed contra regressão", async () => {
+    const { admin, calls } = adminFake({ outgoing: { data: [{ id: "message-1" }], error: null } });
+    await ingestRyzeInbound(admin, { ...base, envelope: envelope("outgoing", { status: "sent" }) });
+
+    const filtro = calls.find((call) => call.op === "not")?.values as { value: string };
+    expect(filtro.value).toContain("delivered");
+    expect(filtro.value).toContain("read");
+    expect(filtro.value).toContain("failed");
+  });
+
+  it("incoming sem remoteJid/from não usa o destinatário to como identidade", async () => {
+    const { admin } = adminFake();
+    const result = await ingestRyzeInbound(admin, {
+      ...base,
+      envelope: envelope("incoming", { remoteJid: undefined, from: undefined, to: "5511888888888" }),
+    });
+    expect(result).toEqual({ status: "ignored", reason: "incoming_sem_identidade_ou_external_id" });
   });
 });

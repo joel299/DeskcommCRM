@@ -22,8 +22,8 @@ const exchangeMessage = z.looseObject({
 });
 
 const statusMessage = z.looseObject({
-  id: text.optional(),
-  status: z.string().optional(),
+  id: text,
+  status: z.enum(["sent", "delivered", "read", "failed"]),
   direction: z.enum(["incoming", "outgoing"]).optional(),
   text: z.string().nullable().optional(),
   body: z.string().nullable().optional(),

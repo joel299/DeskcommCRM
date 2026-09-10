@@ -33,6 +33,7 @@ vi.mock("@/lib/channels/arquivo-de-webhook", () => ({
 }));
 vi.mock("@/lib/channels/inbound", () => ({
   acceptsInboundWebhook: () => true,
+  mensagemSeguraDoInbound: (_provider: string, code: string, message: string) => code === "unauthorized" ? "webhook_unauthorized" : code === "invalid_json" ? "payload_invalid_json" : code === "contrato_violado" ? "payload_contract_invalid" : message,
   handleInboundWebhook: async (_admin: unknown, input: unknown) => {
     state.handled.push(input);
     const raw = (input as { rawBody: string }).rawBody;
@@ -70,7 +71,7 @@ describe("rota neutra — contrato HTTP Ryze", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: "invalid_request" } });
-    expect(state.closed).toEqual([{ status: "error", validSignature: null, erro: "payload fora do contrato" }]);
+    expect(state.closed).toEqual([{ status: "error", validSignature: null, erro: "payload_contract_invalid" }]);
   });
 
   it("Bearer inválido responde 401 e fecha arquivo com assinatura inválida", async () => {
@@ -78,6 +79,6 @@ describe("rota neutra — contrato HTTP Ryze", () => {
 
     expect(response.status).toBe(401);
     expect(await response.json()).toMatchObject({ error: { code: "unauthorized" } });
-    expect(state.closed).toEqual([{ status: "error", validSignature: false, erro: "bad_bearer" }]);
+    expect(state.closed).toEqual([{ status: "error", validSignature: false, erro: "webhook_unauthorized" }]);
   });
 });

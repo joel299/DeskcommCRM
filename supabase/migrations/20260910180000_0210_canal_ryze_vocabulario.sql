@@ -3,7 +3,7 @@
 
 alter table public.channel_sessions
   add column if not exists ryze_instance_name text,
-  add column if not exists ryze_token_encrypted text;
+  add column if not exists ryze_token_encrypted bytea;
 
 -- Atualizar CHECK constraint do provider em channel_sessions
 alter table public.channel_sessions

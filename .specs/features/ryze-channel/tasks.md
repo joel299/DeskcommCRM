@@ -6,17 +6,19 @@
   - Requisito: RYZE-001, RYZE-019
   - Arquivos: `.specs/features/ryze-channel/context-manifest.json`
   - Verificação: `pnpm typecheck`, `pnpm lint:channels`, `pnpm lint:role-rank`, `pnpm test:unit`
-  - Status: COMPLETO (Gate F0 aprovado em Linear GRU-31)
+  - Status: COMPLETO (Gate F0 aprovado no Linear issue GRU-31 / DESKCOMM-00)
 
-- [ ] **Task 1: SDD + Contrato (F1)**
+- [x] **Task 1: SDD + Contrato (F1)**
   - Requisito: RYZE-001 até RYZE-020
   - Arquivos: `.specs/features/ryze-channel/spec.md`, `design.md`, `tasks.md`
+  - Mapeamento requisito → teste: Requisitos definidos no spec.md, mapeados no design.md e desacoplados por fase em tasks.md.
+  - Hipóteses confirmadas: `POST /api/v1/webhooks/channel/[token]` como rota neutra única; expurgo P0 de `instanceData.token` e bloqueio de SSRF em `instanceData.baseUrl`.
   - Verificação: Mapeamento completo de contratos e premissas CONFIRMED vs INFERRED.
-  - Status: EM PROGRESSO
+  - Status: COMPLETO (Documentação entregue e pronta para gate F1)
 
 - [ ] **Task 2: Vocabulário + Schema + Invariantes (F2)**
   - Requisito: RYZE-001, RYZE-003, RYZE-004
-  - Arquivos: `lib/channels/types.ts`, `lib/channels/capabilities.ts`, `lib/channels/session-ref.ts`, `scripts/lint-channels.pattern.ts`, `supabase/migrations/<nova_migration>.sql`
+  - Arquivos: `lib/channels/types.ts`, `lib/channels/capabilities.ts`, `lib/channels/session-ref.ts`, `lib/channels/templates-fonte.ts`, `lib/channels/index.ts`, `scripts/lint-channels.pattern.ts`, `supabase/migrations/20260910180000_0210_canal_ryze_vocabulario.sql`
   - Verificação: `pnpm test:unit`, `pnpm test:db`, `pnpm lint:channels`
 
 - [ ] **Task 3: Adapter Outbound (F3)**

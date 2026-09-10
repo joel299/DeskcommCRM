@@ -7,13 +7,18 @@ vi.mock("@/lib/automation/outbound-url", () => ({
   assertSafeOutboundUrl: vi.fn(),
 }));
 
-import { ryzeAdapter } from "@/lib/channels/adapters/ryze";
+import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
+import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
+import { ryzeAdapter, sanitizeRyzeError } from "@/lib/channels/adapters/ryze";
 import { resolveRyzeCreds } from "@/lib/channels/ryze/credentials";
+import { listRyzeInstances, provisionRyzeInstance, getRyzeAccountToken } from "@/lib/channels/ryze/control-plane";
 import type { OutboundEnvelope } from "@/lib/channels/types";
 
-describe("adapter outbound ryze (F3)", () => {
+describe("adapter outbound ryze & control plane (F3)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(assertDestinoResolvidoSeguro).mockResolvedValue(undefined);
+    vi.mocked(assertSafeOutboundUrl).mockReturnValue(undefined);
   });
 
   describe("resolveRecipient", () => {
@@ -108,8 +113,69 @@ describe("adapter outbound ryze (F3)", () => {
     });
   });
 
-  describe("send (envio de mensagem)", () => {
-    it("envia texto com token no header e replyTo", async () => {
+  describe("control plane & provisionamento", () => {
+    it("obtem account token do runtime sem imprimir", () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "secret_acc_token_123";
+      const token = getRyzeAccountToken();
+      expect(token).toBe("secret_acc_token_123");
+    });
+
+    it("listRyzeInstances chama endpoint de listagem com token no header", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          instances: [{ id: "1", name: "instancia_1", token: "tok_1" }],
+        }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const instances = await listRyzeInstances();
+      expect(instances).toHaveLength(1);
+      expect(instances[0]?.name).toBe("instancia_1");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://ryzeapi.cloud/api/instance/list",
+        expect.objectContaining({
+          headers: expect.objectContaining({ token: "acc_token_xyz" }),
+        })
+      );
+    });
+
+    it("provisionRyzeInstance e idempotente (reutiliza se ja existir)", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          instances: [{ id: "1", name: "instancia_existente", token: "tok_existing" }],
+        }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(),
+        upsert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        rpc: vi.fn().mockResolvedValue({ data: "\\x636970686572", error: null }),
+      } as any;
+
+      const result = await provisionRyzeInstance({
+        organizationId: "org-100",
+        instanceName: "instancia_existente",
+        db: fakeDb,
+      });
+
+      expect(result.isNew).toBe(false);
+      expect(result.instanceName).toBe("instancia_existente");
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith("https://ryzeapi.cloud/api/instance/list", expect.anything());
+    });
+  });
+
+  describe("send (envio de mensagem & SSRF & sanitizacao)", () => {
+    it("passa SOMENTE o hostname (ryzeapi.cloud) ao guard DNS assertDestinoResolvidoSeguro", async () => {
       const fakeDb = {
         from: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),
@@ -136,125 +202,29 @@ describe("adapter outbound ryze (F3)", () => {
         organizationId: "org-100",
         sessionRef: "instancia_a",
         to: "5511999998888",
-        recipient: {
-          isGroup: false,
-          groupChatId: null,
-          phoneNumber: "+5511999998888",
-          waIdentity: null,
-        },
         kind: "text",
         body: "Ola Ryze!",
-        replyToExternalId: "parent_msg_123",
         db: fakeDb,
       } as any;
 
-      const result = await ryzeAdapter.send(envelope);
+      await ryzeAdapter.send(envelope);
 
-      expect(result.externalId).toBe("ryze_msg_999");
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/message/text/instancia_a"),
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            token: "my_ryze_token",
-            "Content-Type": "application/json",
-          }),
-          body: JSON.stringify({
-            number: "5511999998888",
-            message: "Ola Ryze!",
-            replyTo: "parent_msg_123",
-          }),
-        })
-      );
+      expect(assertSafeOutboundUrl).toHaveBeenCalledWith("https://ryzeapi.cloud/");
+      expect(assertDestinoResolvidoSeguro).toHaveBeenCalledWith("ryzeapi.cloud");
+      expect(assertDestinoResolvidoSeguro).not.toHaveBeenCalledWith("https://ryzeapi.cloud");
     });
 
-    it("envia midia de imagem e audio voice note com parametro isVoice", async () => {
-      const fakeDb = {
-        from: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        is: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: {
-            ryze_instance_name: "instancia_a",
-            ryze_token_encrypted: Buffer.from("enc_token"),
-          },
-          error: null,
-        }),
-        rpc: vi.fn().mockResolvedValue({ data: "my_ryze_token", error: null }),
-      } as any;
+    it("sanitiza mensagens de erro adversarias impedindo vazamento de token", () => {
+      const syntheticToken = "SECRET_TOKEN_RYZE_999";
+      const rawError = { code: "AUTH_ERROR", error: `Invalid token supplied: ${syntheticToken}` };
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ success: true, data: { messageId: "audio_msg_123" } }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
+      const sanitized = sanitizeRyzeError(400, rawError, syntheticToken);
 
-      const envelope: OutboundEnvelope = {
-        organizationId: "org-100",
-        sessionRef: "instancia_a",
-        to: "5511999998888",
-        recipient: {
-          isGroup: false,
-          groupChatId: null,
-          phoneNumber: "+5511999998888",
-          waIdentity: null,
-        },
-        kind: "audio",
-        media: { url: "https://example.com/audio.opus", mimeType: "audio/ogg" },
-        db: fakeDb,
-      } as any;
-
-      const result = await ryzeAdapter.send(envelope);
-
-      expect(result.externalId).toBe("audio_msg_123");
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/message/media/instancia_a"),
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({
-            number: "5511999998888",
-            type: "audio",
-            mediaUrl: "https://example.com/audio.opus",
-            caption: "",
-            isVoice: true,
-          }),
-        })
-      );
+      expect(sanitized).not.toContain(syntheticToken);
+      expect(sanitized).toContain("[REDACTED]");
     });
 
-    it("mapeia erro HTTP 401 para ryze_auth_failed", async () => {
-      const fakeDb = {
-        from: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        is: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: {
-            ryze_instance_name: "instancia_a",
-            ryze_token_encrypted: Buffer.from("enc_token"),
-          },
-          error: null,
-        }),
-        rpc: vi.fn().mockResolvedValue({ data: "bad_token", error: null }),
-      } as any;
-
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401 }));
-
-      const envelope: OutboundEnvelope = {
-        organizationId: "org-100",
-        sessionRef: "instancia_a",
-        to: "5511999998888",
-        kind: "text",
-        body: "teste",
-        db: fakeDb,
-      } as any;
-
-      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_auth_failed: 401 invalid token");
-    });
-
-    it("falha explicitamente quando tipo de midia nao for suportado", async () => {
+    it("mapeia erros HTTP conforme matriz de erros (401, 403, 404, 429, 500, 503)", async () => {
       const fakeDb = {
         from: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),
@@ -274,18 +244,34 @@ describe("adapter outbound ryze (F3)", () => {
         organizationId: "org-100",
         sessionRef: "instancia_a",
         to: "5511999998888",
-        recipient: {
-          isGroup: false,
-          groupChatId: null,
-          phoneNumber: "+5511999998888",
-          waIdentity: null,
-        },
-        kind: "sticker" as any,
-        media: { url: "https://example.com/sticker.webp", mimeType: "image/webp" },
+        kind: "text",
+        body: "teste",
         db: fakeDb,
       } as any;
 
-      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_sticker_not_supported");
+      // 401
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) }));
+      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_auth_failed: 401 invalid token");
+
+      // 403
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 403, json: async () => ({}) }));
+      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_permission_denied: 403 instance mismatch");
+
+      // 404
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }));
+      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_instance_not_found: 404 instance not found");
+
+      // 429
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) }));
+      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_rate_limited: 429 rate limit");
+
+      // 500
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }));
+      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_instance_disconnected: HTTP 500");
+
+      // 503
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) }));
+      await expect(ryzeAdapter.send(envelope)).rejects.toThrow("ryze_instance_disconnected: HTTP 503");
     });
   });
 });

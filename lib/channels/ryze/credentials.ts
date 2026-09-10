@@ -5,8 +5,7 @@ export interface RyzeCredentials {
   instanceName: string;
   tokenInstance: string;
   baseUrl: string;
-  /** De onde veio — para diagnóstico. Nunca logue o token. */
-  source: "session" | "env";
+  source: "session";
 }
 
 /** A chave da busca por credenciais com isolamento tenant-aware obrigatório. */
@@ -18,6 +17,7 @@ export interface RyzeCredsLookup {
 /**
  * Resolve as credenciais da instância Ryze para uma organização.
  * NUNCA busca apenas pelo instanceName (evita colisão cross-tenant).
+ * Utiliza estritamente as credenciais cifradas em `channel_sessions`.
  */
 export async function resolveRyzeCreds(
   db: SupabaseClient,
@@ -50,19 +50,6 @@ export async function resolveRyzeCreds(
         source: "session",
       };
     }
-  }
-
-  // Fallback seguro por variável de ambiente em ambiente de dev/teste local
-  const envInstance = process.env.RYZE_INSTANCE_NAME;
-  const envToken = process.env.RYZE_TOKEN_INSTANCE;
-  const envBaseUrl = process.env.RYZE_API_BASE_URL || "https://ryzeapi.cloud";
-  if (envInstance && envToken && envInstance === lookup.instanceName) {
-    return {
-      instanceName: envInstance,
-      tokenInstance: envToken,
-      baseUrl: envBaseUrl,
-      source: "env",
-    };
   }
 
   return null;

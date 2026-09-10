@@ -191,6 +191,27 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     expect(updatedCipher).toBe("cafebabe");
   });
 
+  it("0212 cria ryze_webhook_events com estado recuperável e chave composta", () => {
+    const cols = sql(`
+      select string_agg(column_name, ',' order by ordinal_position)
+      from information_schema.columns
+      where table_schema='public' and table_name='ryze_webhook_events'
+        and column_name in ('organization_id','channel_session_id','event_id','state','attempts','locked_until','completed_at','last_error_code')
+    `).trim();
+    expect(cols).toBe("organization_id,channel_session_id,event_id,state,attempts,locked_until,completed_at,last_error_code");
+    const constraint = sql(`select conname from pg_constraint where conrelid='public.ryze_webhook_events'::regclass and conname='ryze_webhook_events_state_check'`).trim();
+    expect(constraint).toBe("ryze_webhook_events_state_check");
+  });
+
+  it("0212 rejeita o mesmo evento no mesmo tenant e permite isolamento por sessão", () => {
+    const org = novaOrg(`inv-ryze-events-${Date.now()}`);
+    const session1 = "00000000-0000-0000-0000-000000000001";
+    const session2 = "00000000-0000-0000-0000-000000000002";
+    sql(`insert into public.ryze_webhook_events (organization_id,channel_session_id,event_id,event_type) values ('${org}','${session1}','event-1','message.status')`);
+    const duplicate = erroDe(() => sql(`insert into public.ryze_webhook_events (organization_id,channel_session_id,event_id,event_type) values ('${org}','${session1}','event-1','message.status')`));
+    expect(duplicate).toMatch(/ryze_webhook_events_pkey/);
+    expect(sql(`insert into public.ryze_webhook_events (organization_id,channel_session_id,event_id,event_type) values ('${org}','${session2}','event-1','message.status'); select 'ok';`)).toContain("ok");
+  });
   it("sessões legadas (waha, meta_cloud, zernio) continuam válidas e protegidas pelas constraints", () => {
     const org = novaOrg(`inv-ryze-legado-${Date.now()}`);
     const resWaha = insertSession(org, { waha_session_name: `'s-waha-${Date.now()}'` });

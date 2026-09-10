@@ -8,6 +8,7 @@ import {
   ryzeStatusDedupeKey,
 } from "@/lib/channels/ryze/envelope";
 import { sanitizeRyzeWebhookBody, verifyRyzeBearer } from "@/lib/channels/ryze/webhook";
+import statusFixture from "@/.specs/features/ryze-channel/fixtures/message-status.redacted.json";
 
 describe("Ryze F4 — autenticação, envelope, sanitização e chaves", () => {
   const secret = "secret-1234567890";
@@ -87,5 +88,13 @@ describe("Ryze F4 — autenticação, envelope, sanitização e chaves", () => {
     expect(first.ok && ryzeMessageExternalId(first.envelope)).toBe("msg-1");
     expect(first.ok && ryzeStatusDedupeKey(first.envelope)).toBe("delivery-1");
     expect(second.ok && ryzeStatusDedupeKey(second.envelope)).toBe("delivery-2");
+  });
+
+  it("fixa o wire sanitizado de message.status usado na F4", () => {
+    const result = lerEnvelopeRyze(JSON.stringify(statusFixture));
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.envelope.data.id).toBe("delivery-event-redacted-001");
+    expect(result.ok && result.envelope.data.message.id).toBe("message-external-redacted-001");
+    expect(result.ok && result.envelope.data.message.status).toBe("delivered");
   });
 });

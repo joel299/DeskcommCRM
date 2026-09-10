@@ -1895,7 +1895,13 @@ CREATE TABLE IF NOT EXISTS "public"."ryze_webhook_events" (
     "channel_session_id" uuid NOT NULL,
     "event_id" text NOT NULL,
     "event_type" text NOT NULL,
+    "state" text DEFAULT 'processing'::text NOT NULL,
+    "attempts" integer DEFAULT 1 NOT NULL,
+    "locked_until" timestamp with time zone DEFAULT (now() + '00:05:00'::interval) NOT NULL,
+    "completed_at" timestamp with time zone,
+    "last_error_code" text,
     "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "ryze_webhook_events_state_check" CHECK (("state" = ANY (ARRAY['processing'::text, 'processed'::text, 'failed'::text]))),
     CONSTRAINT "ryze_webhook_events_pkey" PRIMARY KEY ("organization_id", "channel_session_id", "event_id")
 );
 

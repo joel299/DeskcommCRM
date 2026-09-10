@@ -1,16 +1,18 @@
 import { timingSafeEqual } from "node:crypto";
 
+export const MIN_RYZE_WEBHOOK_SECRET_LEN = 16;
+
 export function isRyzeProvider(provider: string): boolean {
   return provider === "ryze";
 }
 
-
 export function verifyRyzeBearer(headerValue: string | null, secret: string | null): boolean {
-  if (!headerValue || !secret || !headerValue.startsWith("Bearer ")) return false;
+  if (!headerValue || !secret || secret.length < MIN_RYZE_WEBHOOK_SECRET_LEN) return false;
+  if (!headerValue.startsWith("Bearer ")) return false;
   const received = headerValue.slice("Bearer ".length);
   const a = Buffer.from(received, "utf8");
   const b = Buffer.from(secret, "utf8");
-  if (a.length === 0 || a.length !== b.length) return false;
+  if (a.length < MIN_RYZE_WEBHOOK_SECRET_LEN || a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }
 
@@ -26,10 +28,11 @@ export function sanitizeRyzeWebhookBody(rawBody: string): string {
     }
 
     const root = structuredClone(parsed) as Record<string, unknown>;
-    const instanceData = root.instanceData;
-    if (instanceData && typeof instanceData === "object" && !Array.isArray(instanceData)) {
-      delete (instanceData as Record<string, unknown>).token;
-      delete (instanceData as Record<string, unknown>).baseUrl;
+    for (const candidate of [root.instanceData, (root.data as Record<string, unknown> | undefined)?.instanceData]) {
+      if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+        delete (candidate as Record<string, unknown>).token;
+        delete (candidate as Record<string, unknown>).baseUrl;
+      }
     }
     return JSON.stringify(root);
   } catch {

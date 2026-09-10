@@ -2,7 +2,7 @@
   "feature": "ryze-channel",
   "base_sha": "6aee65649892238d4138f6baab0e506f01326ae1",
   "branch": "feat/channel-ryze",
-  "phase": "F0",
+  "phase": "F4",
   "allowed_paths": [
     ".specs/features/ryze-channel/spec.md",
     ".specs/features/ryze-channel/design.md",
@@ -12,11 +12,14 @@
     "lib/channels/capabilities.ts",
     "lib/channels/index.ts",
     "lib/channels/inbound.ts",
+    "lib/channels/arquivo-de-webhook.ts",
     "lib/channels/session-ref.ts",
     "lib/channels/adapters/ryze.ts",
     "lib/channels/ryze/**",
+    "app/api/v1/webhooks/channel/[token]/route.ts",
     "scripts/lint-channels.pattern.ts",
     "tests/unit/*ryze*",
+    "tests/unit/contrato-do-webhook-zernio.test.ts",
     "tests/api/*ryze*",
     "tests/invariants/*ryze*",
     "tests/e2e/*ryze*",
@@ -34,6 +37,6 @@
     "lib/channels/adapters/meta-cloud.ts",
     "lib/channels/adapters/zernio.ts"
   ],
-  "linear_issue": "GRU-31",
-  "gate": "IN_REVIEW"
+  "linear_issue": "GRU-35",
+  "gate": "IN_PROGRESS"
 }

@@ -11,7 +11,12 @@ import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
 import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
 import { ryzeAdapter, sanitizeRyzeError } from "@/lib/channels/adapters/ryze";
 import { resolveRyzeCreds } from "@/lib/channels/ryze/credentials";
-import { listRyzeInstances, provisionRyzeInstance, getRyzeAccountToken } from "@/lib/channels/ryze/control-plane";
+import {
+  listRyzeInstances,
+  provisionRyzeInstance,
+  persistRyzeSession,
+  getRyzeAccountToken,
+} from "@/lib/channels/ryze/control-plane";
 import type { OutboundEnvelope } from "@/lib/channels/types";
 
 describe("adapter outbound ryze & control plane (F3)", () => {
@@ -113,44 +118,67 @@ describe("adapter outbound ryze & control plane (F3)", () => {
     });
   });
 
-  describe("control plane & provisionamento", () => {
+  describe("control plane & provisionamento (fail-closed & idempotencia)", () => {
     it("obtem account token do runtime sem imprimir", () => {
       process.env.RYZE_ACCOUNT_TOKEN = "secret_acc_token_123";
       const token = getRyzeAccountToken();
       expect(token).toBe("secret_acc_token_123");
     });
 
-    it("listRyzeInstances chama endpoint de listagem com token no header", async () => {
+    it("listRyzeInstances falha fechado em HTTP 200 com payload nao-JSON, success=false ou sem campo instances", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+
+      // 1. Resposta não-JSON
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => { throw new Error("bad json"); },
+      }));
+      await expect(listRyzeInstances()).rejects.toThrow("ryze_instance_list_invalid_response");
+
+      // 2. success: false
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: false }),
+      }));
+      await expect(listRyzeInstances()).rejects.toThrow("ryze_instance_list_invalid_response");
+
+      // 3. Objeto sem campo instances
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true }),
+      }));
+      await expect(listRyzeInstances()).rejects.toThrow("ryze_instance_list_invalid_response");
+    });
+
+    it("garante zero chamadas a CREATE se a listagem retornar resposta malformada ou invalida", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({
-          success: true,
-          instances: [{ id: "1", name: "instancia_1", token: "tok_1" }],
-        }),
+        json: async () => ({ success: true }), // sem o array instances
       });
       vi.stubGlobal("fetch", mockFetch);
 
-      const instances = await listRyzeInstances();
-      expect(instances).toHaveLength(1);
-      expect(instances[0]?.name).toBe("instancia_1");
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://ryzeapi.cloud/api/instance/list",
-        expect.objectContaining({
-          headers: expect.objectContaining({ token: "acc_token_xyz" }),
-        })
-      );
+      const fakeDb = {} as any;
+      await expect(
+        provisionRyzeInstance({ organizationId: "org-1", instanceName: "inst1", db: fakeDb })
+      ).rejects.toThrow("ryze_instance_list_invalid_response");
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).not.toHaveBeenCalledWith("https://ryzeapi.cloud/api/instance/create", expect.anything());
     });
 
-    it("recusa CREATE quando a instancia ja existe no plano de controle mas nao possui token", async () => {
+    it("recusa CREATE quando a instancia ja existe no plano de controle mas nao possui token nem credencial salva", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         json: async () => ({
           success: true,
-          instances: [{ id: "1", name: "vivo1203" }], // sem token
+          instances: [{ id: "1", name: "vivo1203" }],
         }),
       });
       vi.stubGlobal("fetch", mockFetch);
@@ -171,7 +199,6 @@ describe("adapter outbound ryze & control plane (F3)", () => {
         })
       ).rejects.toThrow("ryze_existing_instance_token_unavailable");
 
-      // Garantir zero chamadas ao POST /api/instance/create
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch).not.toHaveBeenCalledWith("https://ryzeapi.cloud/api/instance/create", expect.anything());
     });
@@ -192,9 +219,13 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       const fakeUpdate = vi.fn();
       const fakeDb = {
         from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
         insert: fakeInsert,
         update: fakeUpdate,
-        rpc: vi.fn().mockResolvedValue({ data: null, error: "encrypt_failed" }), // falha na criptografia
+        rpc: vi.fn().mockResolvedValue({ data: null, error: "encrypt_failed" }),
       } as any;
 
       await expect(
@@ -209,47 +240,110 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       expect(fakeUpdate).not.toHaveBeenCalled();
     });
 
-    it("provisiona uma nova instancia inexistente com sucesso", async () => {
+    it("reexecucao sequencial (repeated provision) e estritamente idempotente (segundo cycle tem zero chamadas de CREATE)", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
-      const mockFetch = vi.fn()
+
+      // 1ª execução: lista vazia -> dispara CREATE -> salva no banco
+      // 2ª execução: lista retorna a instância já existente com token -> reutiliza com zero CREATE
+      let mockFetch = vi.fn()
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => ({ success: true, instances: [] }), // sem instâncias
+          json: async () => ({ success: true, instances: [] }),
         })
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => ({ success: true, instance: { name: "nova_instancia", token: "tok_new" } }),
+          json: async () => ({ success: true, instance: { name: "inst_idempotent", token: "tok_idempotent" } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            instances: [{ id: "2", name: "inst_idempotent", token: "tok_idempotent" }],
+          }),
         });
+
       vi.stubGlobal("fetch", mockFetch);
 
-      const fakeInsert = vi.fn().mockResolvedValue({ data: null, error: null });
+      const fakeInsert = vi.fn().mockResolvedValue({ data: { id: "sess-1" }, error: null });
+      const fakeSelect = vi.fn()
+        .mockResolvedValueOnce({ data: null, error: null }) // 1º cycle: não existe no DB
+        .mockResolvedValueOnce({ data: { id: "sess-1" }, error: null }); // 2º cycle: existe no DB
+
       const fakeDb = {
         from: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         is: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        maybeSingle: fakeSelect,
         insert: fakeInsert,
+        update: vi.fn().mockReturnThis(),
         rpc: vi.fn().mockResolvedValue({ data: "\\x636970686572", error: null }),
       } as any;
 
-      const result = await provisionRyzeInstance({
-        organizationId: "org-100",
-        instanceName: "nova_instancia",
-        db: fakeDb,
-      });
+      // Primeiro ciclo (Criação inicial)
+      const res1 = await provisionRyzeInstance({ organizationId: "org-100", instanceName: "inst_idempotent", db: fakeDb });
+      expect(res1.isNew).toBe(true);
 
-      expect(result.isNew).toBe(true);
-      expect(result.instanceName).toBe("nova_instancia");
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(mockFetch).toHaveBeenNthCalledWith(2, "https://ryzeapi.cloud/api/instance/create", expect.anything());
-      expect(fakeInsert).toHaveBeenCalledWith(
+      // Segundo ciclo (Reexecução)
+      const res2 = await provisionRyzeInstance({ organizationId: "org-100", instanceName: "inst_idempotent", db: fakeDb });
+      expect(res2.isNew).toBe(false);
+
+      // Contagem total de chamadas ao endpoint CREATE: exatamente 1 (no 1º ciclo; 0 no 2º ciclo)
+      const createCalls = mockFetch.mock.calls.filter(([url]) => url.includes("/api/instance/create"));
+      expect(createCalls).toHaveLength(1);
+    });
+
+    it("persistRyzeSession executa INSERT se a sessao for nova ou UPDATE pelo id da org se ja existir", async () => {
+      // Branch 1: INSERT para nova sessão
+      const mockInsert = vi.fn().mockResolvedValue({ data: { id: "new-sess-id" }, error: null });
+      const fakeDbInsert = {
+        from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        insert: mockInsert,
+      } as any;
+
+      const resInsert = await persistRyzeSession(fakeDbInsert, {
+        organizationId: "org-test",
+        instanceName: "inst-test",
+        encryptedToken: "\\x1234",
+      });
+      expect(resInsert.action).toBe("inserted");
+      expect(mockInsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          organization_id: "org-100",
+          organization_id: "org-test",
           provider: "ryze",
-          ryze_instance_name: "nova_instancia",
+          ryze_instance_name: "inst-test",
+        })
+      );
+
+      // Branch 2: UPDATE para sessão existente
+      const mockUpdate = vi.fn().mockReturnThis();
+      const fakeDbUpdate = {
+        from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: "existing-sess-id" }, error: null }),
+        update: mockUpdate,
+        then: (cb: any) => Promise.resolve({ data: null, error: null }).then(cb),
+      } as any;
+
+      const resUpdate = await persistRyzeSession(fakeDbUpdate, {
+        organizationId: "org-test",
+        instanceName: "inst-test",
+        encryptedToken: "\\x5678",
+      });
+      expect(resUpdate.action).toBe("updated");
+      expect(resUpdate.id).toBe("existing-sess-id");
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ryze_token_encrypted: "\\x5678",
         })
       );
     });

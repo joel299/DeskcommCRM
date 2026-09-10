@@ -30,6 +30,8 @@ export function getRyzeAccountToken(): string {
 
 /**
  * Lista as instâncias registradas na conta Ryze usando a TokenAccount global.
+ * Fail-closed: se a resposta for HTTP 200 porém sem JSON válido, success=false ou instâncias ausentes,
+ * lança erro explícito (JAMAIS retorna array vazio para não autorizar CREATE indevido).
  */
 export async function listRyzeInstances(options?: {
   accountToken?: string;
@@ -57,13 +59,72 @@ export async function listRyzeInstances(options?: {
   }
 
   const json = (await res.json().catch(() => null)) as RyzeListResponse | null;
-  return json?.instances ?? [];
+  if (!json || json.success === false || !Array.isArray(json.instances)) {
+    throw new Error("ryze_instance_list_invalid_response: resposta da listagem malformada ou sem campo instances");
+  }
+
+  return json.instances;
+}
+
+/**
+ * Persiste a sessão do tenant de forma explícita e isolada (INSERT se nova, UPDATE por ID confiável se existente).
+ */
+export async function persistRyzeSession(
+  db: SupabaseClient,
+  params: {
+    organizationId: string;
+    instanceName: string;
+    encryptedToken: string;
+  }
+): Promise<{ id?: string; action: "inserted" | "updated" }> {
+  const { organizationId, instanceName, encryptedToken } = params;
+
+  const { data: existingSession } = await db
+    .from("channel_sessions")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("provider", "ryze")
+    .eq("ryze_instance_name", instanceName)
+    .is("archived_at", null)
+    .maybeSingle();
+
+  if (existingSession?.id) {
+    const { error: updateErr } = await db
+      .from("channel_sessions")
+      .update({
+        ryze_token_encrypted: encryptedToken,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existingSession.id)
+      .eq("organization_id", organizationId);
+
+    if (updateErr) {
+      throw new Error(`ryze_session_persistence_failed: ${updateErr.message}`);
+    }
+    return { id: existingSession.id, action: "updated" };
+  } else {
+    const { error: insertErr } = await db
+      .from("channel_sessions")
+      .insert({
+        organization_id: organizationId,
+        provider: "ryze",
+        ryze_instance_name: instanceName,
+        ryze_token_encrypted: encryptedToken,
+        status: "active",
+        updated_at: new Date().toISOString(),
+      });
+
+    if (insertErr) {
+      throw new Error(`ryze_session_persistence_failed: ${insertErr.message}`);
+    }
+    return { action: "inserted" };
+  }
 }
 
 /**
  * Provisiona ou reutiliza uma instância Ryze para uma organização (idempotente).
+ * Se a listagem falhar ou for inválida, falha fechado (CREATE = 0).
  * Se a instância já existir no plano de controle, JAMAIS dispara POST /api/instance/create.
- * Cifra e persiste o TokenInstance em `channel_sessions` com fail-closed e busca tenant-aware.
  */
 export async function provisionRyzeInstance(params: {
   organizationId: string;
@@ -79,7 +140,7 @@ export async function provisionRyzeInstance(params: {
   assertSafeOutboundUrl(parsed.toString());
   await assertDestinoResolvidoSeguro(parsed.hostname);
 
-  // 1. Listar e verificar se a instância já existe (list-before-create)
+  // 1. Listar e verificar se a instância já existe (list-before-create fail-closed)
   const instances = await listRyzeInstances({ accountToken, baseUrl });
   const existing = instances.find((i) => i.name === instanceName);
 
@@ -144,45 +205,12 @@ export async function provisionRyzeInstance(params: {
     throw new Error("ryze_control_encrypt_failed: falha ao criptografar TokenInstance");
   }
 
-  // 3. Persistência tenant-aware com busca por id da sessão
-  const { data: existingSession } = await db
-    .from("channel_sessions")
-    .select("id")
-    .eq("organization_id", organizationId)
-    .eq("provider", "ryze")
-    .eq("ryze_instance_name", instanceName)
-    .is("archived_at", null)
-    .maybeSingle();
-
-  if (existingSession?.id) {
-    const { error: updateErr } = await db
-      .from("channel_sessions")
-      .update({
-        ryze_token_encrypted: encryptedToken,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", existingSession.id)
-      .eq("organization_id", organizationId);
-
-    if (updateErr) {
-      throw new Error(`ryze_session_persistence_failed: ${updateErr.message}`);
-    }
-  } else {
-    const { error: insertErr } = await db
-      .from("channel_sessions")
-      .insert({
-        organization_id: organizationId,
-        provider: "ryze",
-        ryze_instance_name: instanceName,
-        ryze_token_encrypted: encryptedToken,
-        status: "active",
-        updated_at: new Date().toISOString(),
-      });
-
-    if (insertErr) {
-      throw new Error(`ryze_session_persistence_failed: ${insertErr.message}`);
-    }
-  }
+  // 3. Persistência tenant-aware via módulo isolado de persistência
+  await persistRyzeSession(db, {
+    organizationId,
+    instanceName,
+    encryptedToken,
+  });
 
   return { instanceName, isNew };
 }

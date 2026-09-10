@@ -199,7 +199,7 @@ export async function provisionRyzeInstance(params: {
     }
 
     // Instância NÃO existe -> Criar UMA instância
-    const createRes = await fetch(`${baseUrl}/api/instance/create`, {
+    const createRes = await fetch(`${baseUrl}/api/instance/new`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -217,10 +217,14 @@ export async function provisionRyzeInstance(params: {
     const createJson = (await createRes.json().catch(() => null)) as {
       success?: boolean;
       instance?: RyzeInstanceDescriptor;
-      token?: string;
+      data?: { name?: string; token?: string };
     } | null;
 
-    tokenInstance = createJson?.instance?.token || createJson?.token;
+    if (!createJson || createJson.success === false) {
+      throw new Error("ryze_instance_create_invalid_response: resposta de criação inválida");
+    }
+
+    tokenInstance = createJson.instance?.token || createJson.data?.token;
     isNew = true;
 
     if (!tokenInstance) {

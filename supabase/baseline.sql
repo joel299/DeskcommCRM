@@ -23286,7 +23286,7 @@ grant execute on function public.fn_update_budget_consumption() to service_role;
 -- -----------------------------------------------------------------------------
 alter table public.channel_sessions
   add column if not exists ryze_instance_name text,
-  add column if not exists ryze_token_encrypted text;
+  add column if not exists ryze_token_encrypted bytea;
 
 alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_check;

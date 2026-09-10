@@ -143,34 +143,115 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       );
     });
 
-    it("provisionRyzeInstance e idempotente (reutiliza se ja existir)", async () => {
+    it("recusa CREATE quando a instancia ja existe no plano de controle mas nao possui token", async () => {
       process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         json: async () => ({
           success: true,
-          instances: [{ id: "1", name: "instancia_existente", token: "tok_existing" }],
+          instances: [{ id: "1", name: "vivo1203" }], // sem token
         }),
       });
       vi.stubGlobal("fetch", mockFetch);
 
       const fakeDb = {
         from: vi.fn().mockReturnThis(),
-        upsert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      } as any;
+
+      await expect(
+        provisionRyzeInstance({
+          organizationId: "org-100",
+          instanceName: "vivo1203",
+          db: fakeDb,
+        })
+      ).rejects.toThrow("ryze_existing_instance_token_unavailable");
+
+      // Garantir zero chamadas ao POST /api/instance/create
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).not.toHaveBeenCalledWith("https://ryzeapi.cloud/api/instance/create", expect.anything());
+    });
+
+    it("falha fechado com erro explicito se encryptWebhookSecret retornar null (zero DB writes)", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          instances: [{ id: "1", name: "instancia_test", token: "tok_test" }],
+        }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const fakeInsert = vi.fn();
+      const fakeUpdate = vi.fn();
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(),
+        insert: fakeInsert,
+        update: fakeUpdate,
+        rpc: vi.fn().mockResolvedValue({ data: null, error: "encrypt_failed" }), // falha na criptografia
+      } as any;
+
+      await expect(
+        provisionRyzeInstance({
+          organizationId: "org-100",
+          instanceName: "instancia_test",
+          db: fakeDb,
+        })
+      ).rejects.toThrow("ryze_control_encrypt_failed");
+
+      expect(fakeInsert).not.toHaveBeenCalled();
+      expect(fakeUpdate).not.toHaveBeenCalled();
+    });
+
+    it("provisiona uma nova instancia inexistente com sucesso", async () => {
+      process.env.RYZE_ACCOUNT_TOKEN = "acc_token_xyz";
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, instances: [] }), // sem instâncias
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, instance: { name: "nova_instancia", token: "tok_new" } }),
+        });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const fakeInsert = vi.fn().mockResolvedValue({ data: null, error: null });
+      const fakeDb = {
+        from: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        insert: fakeInsert,
         rpc: vi.fn().mockResolvedValue({ data: "\\x636970686572", error: null }),
       } as any;
 
       const result = await provisionRyzeInstance({
         organizationId: "org-100",
-        instanceName: "instancia_existente",
+        instanceName: "nova_instancia",
         db: fakeDb,
       });
 
-      expect(result.isNew).toBe(false);
-      expect(result.instanceName).toBe("instancia_existente");
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch).toHaveBeenCalledWith("https://ryzeapi.cloud/api/instance/list", expect.anything());
+      expect(result.isNew).toBe(true);
+      expect(result.instanceName).toBe("nova_instancia");
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(2, "https://ryzeapi.cloud/api/instance/create", expect.anything());
+      expect(fakeInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organization_id: "org-100",
+          provider: "ryze",
+          ryze_instance_name: "nova_instancia",
+        })
+      );
     });
   });
 

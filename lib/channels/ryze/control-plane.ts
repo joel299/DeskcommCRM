@@ -62,8 +62,8 @@ export async function listRyzeInstances(options?: {
 
 /**
  * Provisiona ou reutiliza uma instância Ryze para uma organização (idempotente).
- * Se a instância já existir no plano de controle, reutiliza o TokenInstance sem criar nova.
- * Cifra e persiste o TokenInstance em `channel_sessions`.
+ * Se a instância já existir no plano de controle, JAMAIS dispara POST /api/instance/create.
+ * Cifra e persiste o TokenInstance em `channel_sessions` com fail-closed e busca tenant-aware.
  */
 export async function provisionRyzeInstance(params: {
   organizationId: string;
@@ -83,11 +83,32 @@ export async function provisionRyzeInstance(params: {
   const instances = await listRyzeInstances({ accountToken, baseUrl });
   const existing = instances.find((i) => i.name === instanceName);
 
-  let tokenInstance: string | undefined = existing?.token;
+  let tokenInstance: string | undefined;
   let isNew = false;
 
-  // 2. Se não existir, tenta criar UMA instância
-  if (!existing || !tokenInstance) {
+  if (existing) {
+    // Instância JÁ EXISTE no plano de controle -> JAMAIS disparar create
+    if (existing.token) {
+      tokenInstance = existing.token;
+    } else {
+      // Verificar se o tenant já possui credencial salva para esta instância
+      const { data: dbCred } = await db
+        .from("channel_sessions")
+        .select("ryze_token_encrypted")
+        .eq("organization_id", organizationId)
+        .eq("provider", "ryze")
+        .eq("ryze_instance_name", instanceName)
+        .is("archived_at", null)
+        .maybeSingle();
+
+      if (dbCred?.ryze_token_encrypted) {
+        return { instanceName, isNew: false };
+      }
+
+      throw new Error("ryze_existing_instance_token_unavailable: a instancia ja existe no plano de controle mas o token nao esta disponivel para re-vinculo");
+    }
+  } else {
+    // Instância NÃO existe -> Criar UMA instância
     const createRes = await fetch(`${baseUrl}/api/instance/create`, {
       method: "POST",
       headers: {
@@ -111,29 +132,56 @@ export async function provisionRyzeInstance(params: {
 
     tokenInstance = createJson?.instance?.token || createJson?.token;
     isNew = true;
+
+    if (!tokenInstance) {
+      throw new Error("ryze_token_instance_missing: nao foi possivel obter TokenInstance da resposta do create");
+    }
   }
 
-  if (!tokenInstance) {
-    throw new Error("ryze_token_instance_missing: nao foi possivel obter TokenInstance da Ryze");
-  }
-
-  // 3. Cifrar TokenInstance e persistir por tenant em channel_sessions
+  // 2. Criptografia obrigatória com fail-closed antes de qualquer escrita no banco
   const encryptedToken = await encryptWebhookSecret(db, tokenInstance);
+  if (!encryptedToken) {
+    throw new Error("ryze_control_encrypt_failed: falha ao criptografar TokenInstance");
+  }
 
-  const { error } = await db.from("channel_sessions").upsert(
-    {
-      organization_id: organizationId,
-      provider: "ryze",
-      ryze_instance_name: instanceName,
-      ryze_token_encrypted: encryptedToken,
-      status: "active",
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "organization_id,ryze_instance_name" }
-  );
+  // 3. Persistência tenant-aware com busca por id da sessão
+  const { data: existingSession } = await db
+    .from("channel_sessions")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("provider", "ryze")
+    .eq("ryze_instance_name", instanceName)
+    .is("archived_at", null)
+    .maybeSingle();
 
-  if (error) {
-    throw new Error(`ryze_session_persistence_failed: ${error.message}`);
+  if (existingSession?.id) {
+    const { error: updateErr } = await db
+      .from("channel_sessions")
+      .update({
+        ryze_token_encrypted: encryptedToken,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existingSession.id)
+      .eq("organization_id", organizationId);
+
+    if (updateErr) {
+      throw new Error(`ryze_session_persistence_failed: ${updateErr.message}`);
+    }
+  } else {
+    const { error: insertErr } = await db
+      .from("channel_sessions")
+      .insert({
+        organization_id: organizationId,
+        provider: "ryze",
+        ryze_instance_name: instanceName,
+        ryze_token_encrypted: encryptedToken,
+        status: "active",
+        updated_at: new Date().toISOString(),
+      });
+
+    if (insertErr) {
+      throw new Error(`ryze_session_persistence_failed: ${insertErr.message}`);
+    }
   }
 
   return { instanceName, isNew };

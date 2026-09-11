@@ -31,14 +31,15 @@ export async function ingestRyzeInbound(
     ? ryzeStatusDedupeKey(input.envelope)
     : ryzeEventId(input.envelope) ?? ryzeMessageExternalId(input.envelope);
   if (eventKey) {
-    const claimToken = await claimRyzeEvent(admin, input, eventKey);
-    if (!claimToken) return { status: "duplicate" };
+    const claim = await claimRyzeEvent(admin, input, eventKey);
+    if (claim.outcome === "busy") throw new Error("ryze_event_busy");
+    if (claim.outcome === "already_processed") return { status: "duplicate" };
     try {
       const result = await processRyzeEvent(admin, input);
-      await finishRyzeEvent(admin, input, eventKey, claimToken, "processed");
+      await finishRyzeEvent(admin, input, eventKey, claim.token!, "processed");
       return result;
     } catch (error) {
-      await finishRyzeEvent(admin, input, eventKey, claimToken, "failed");
+      await finishRyzeEvent(admin, input, eventKey, claim.token!, "failed");
       throw error;
     }
   }
@@ -52,17 +53,15 @@ async function processRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput): 
   return insertRyzeIncoming(admin, { ...input, envelope: input.envelope });
 }
 
-async function claimRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string): Promise<string | null> {
+async function claimRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string): Promise<{ outcome: "claimed" | "already_processed" | "busy"; token?: string }> {
   const response = await admin.rpc("fn_claim_ryze_webhook_event", {
-    p_org: input.organizationId,
-    p_session: input.channelSessionId,
-    p_event: eventId,
-    p_event_type: input.envelope.event,
+    p_org: input.organizationId, p_session: input.channelSessionId, p_event: eventId, p_event_type: input.envelope.event,
   });
   if (response.error) throw new Error("ryze_event_claim_failed");
   const row = Array.isArray(response.data) ? response.data[0] : response.data;
-  if (!row?.claimed || !row.claim_token) return null;
-  return row.claim_token as string;
+  if (row?.outcome === "claimed" && row.claim_token) return { outcome: "claimed", token: row.claim_token as string };
+  if (row?.outcome === "already_processed") return { outcome: "already_processed" };
+  return { outcome: "busy" };
 }
 
 async function finishRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string, claimToken: string, state: "processed" | "failed"): Promise<void> {
@@ -205,11 +204,19 @@ async function completarPosEntrada(
   if (claimRow?.outcome === "already_processed") return false;
   if (claimRow?.outcome !== "claimed" || !claimRow.claim_token) return false;
 
-  await aplicarEfeitosPosEntrada(admin, {
-    organizationId: input.organizationId, contactId, conversationId, messageId,
-    channelSessionId: input.channelSessionId, texto: preview || null,
-    nomeDoContato: null, origem: "ryze_webhook", strictEffects: true,
-  });
+  try {
+    await aplicarEfeitosPosEntrada(admin, {
+      organizationId: input.organizationId, contactId, conversationId, messageId,
+      channelSessionId: input.channelSessionId, texto: preview || null,
+      nomeDoContato: null, origem: "ryze_webhook", strictEffects: true,
+    });
+  } catch (error) {
+    await admin.rpc("fn_fail_ryze_message_effects" as never, {
+      p_org: input.organizationId, p_session: input.channelSessionId, p_message: messageId,
+      p_claim_token: claimRow.claim_token,
+    });
+    throw error;
+  }
 
   const finished = await admin.rpc("fn_finish_ryze_message_effects" as never, {
     p_org: input.organizationId, p_session: input.channelSessionId,

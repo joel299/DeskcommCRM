@@ -235,6 +235,7 @@ async function aplicarOptOut(admin: Admin, entrada: EntradaDeMensagem): Promise<
       metadata: { reason: "stop_keyword", contact_id: entrada.contactId, origem: entrada.origem },
     });
   } catch (err) {
+    if (entrada.strictEffects) throw err;
     logger.error("pos-entrada: opt-out NAO gravado — o contato segue recebendo", {
       organization_id: entrada.organizationId,
       contact_id: entrada.contactId,

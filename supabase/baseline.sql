@@ -1948,7 +1948,7 @@ CREATE TABLE IF NOT EXISTS "public"."ryze_message_effects" (
   "state" text DEFAULT 'processing'::text NOT NULL,
   "locked_until" timestamp with time zone DEFAULT (now() + '00:05:00'::interval) NOT NULL,
   "claim_token" uuid NOT NULL,
-  "marked_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "mark_completed_at" timestamp with time zone,
   "completed_at" timestamp with time zone,
   CONSTRAINT "ryze_message_effects_state_check" CHECK ("state" = ANY (ARRAY['processing'::text, 'processed'::text])),
   CONSTRAINT "ryze_message_effects_pkey" PRIMARY KEY ("organization_id", "channel_session_id", "message_id")
@@ -1958,21 +1958,24 @@ REVOKE ALL ON TABLE "public"."ryze_message_effects" FROM "anon", "authenticated"
 GRANT ALL ON TABLE "public"."ryze_message_effects" TO "service_role";
 
 CREATE OR REPLACE FUNCTION "public"."fn_claim_ryze_message_effects"("p_org" uuid, "p_session" uuid, "p_message" uuid, "p_conversation" uuid, "p_contact" uuid, "p_preview" text, "p_at" timestamp with time zone)
-RETURNS TABLE("claimed" boolean, "claim_token" uuid)
+RETURNS TABLE("outcome" text, "claim_token" uuid)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE "v_token" uuid := gen_random_uuid(); "v_processed" boolean; "v_rows" integer;
+DECLARE "v_token" uuid := gen_random_uuid(); "v_rows" integer; "v_state" text; "v_marked" timestamp with time zone;
 BEGIN
   INSERT INTO public.ryze_message_effects (organization_id, channel_session_id, message_id, conversation_id, contact_id, claim_token)
   VALUES (p_org, p_session, p_message, p_conversation, p_contact, v_token) ON CONFLICT (organization_id, channel_session_id, message_id) DO NOTHING;
   GET DIAGNOSTICS "v_rows" = ROW_COUNT;
   IF "v_rows" = 0 THEN
-    SELECT state = 'processed' INTO v_processed FROM public.ryze_message_effects WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message;
-    IF v_processed THEN RETURN QUERY SELECT false, null::uuid; RETURN; END IF;
+    SELECT state, mark_completed_at INTO v_state, v_marked FROM public.ryze_message_effects WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message;
+    IF v_state = 'processed' THEN RETURN QUERY SELECT 'already_processed'::text, null::uuid; RETURN; END IF;
     UPDATE public.ryze_message_effects SET state='processing', locked_until=now()+interval '5 minutes', claim_token=v_token WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message AND state='processing' AND locked_until <= now();
-    IF NOT FOUND THEN RETURN QUERY SELECT false, null::uuid; RETURN; END IF;
+    IF NOT FOUND THEN RETURN QUERY SELECT 'busy'::text, null::uuid; RETURN; END IF;
   END IF;
-  PERFORM public.fn_mark_conversation_message(p_conversation, 'inbound', p_preview, p_at);
-  RETURN QUERY SELECT true, v_token;
+  IF "v_rows" = 1 OR v_marked IS NULL THEN
+    PERFORM public.fn_mark_conversation_message(p_conversation, 'inbound', p_preview, p_at);
+    UPDATE public.ryze_message_effects SET mark_completed_at=now() WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message AND "public"."ryze_message_effects"."claim_token"=v_token;
+  END IF;
+  RETURN QUERY SELECT 'claimed'::text, v_token;
 END;
 $$;
 

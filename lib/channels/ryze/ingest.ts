@@ -201,12 +201,14 @@ async function completarPosEntrada(
   });
   if (claimed.error) throw new Error("ryze_conversation_mark_failed");
   const claimRow = Array.isArray(claimed.data) ? claimed.data[0] : claimed.data;
-  if (!claimRow?.claimed || !claimRow.claim_token) return false;
+  if (claimRow?.outcome === "busy") throw new Error("ryze_post_effects_busy");
+  if (claimRow?.outcome === "already_processed") return false;
+  if (claimRow?.outcome !== "claimed" || !claimRow.claim_token) return false;
 
   await aplicarEfeitosPosEntrada(admin, {
     organizationId: input.organizationId, contactId, conversationId, messageId,
     channelSessionId: input.channelSessionId, texto: preview || null,
-    nomeDoContato: null, origem: "ryze_webhook",
+    nomeDoContato: null, origem: "ryze_webhook", strictEffects: true,
   });
 
   const finished = await admin.rpc("fn_finish_ryze_message_effects" as never, {

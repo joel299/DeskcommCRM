@@ -103,6 +103,8 @@ export interface EntradaDeMensagem {
    * lendo o `event_log` meses depois, se saiba por onde a mensagem entrou.
    */
   origem: string;
+  /** Faz falhas pós-entrada serem retryable para boundaries duráveis. */
+  strictEffects?: boolean;
 }
 
 /**
@@ -185,6 +187,7 @@ async function avaliarCampanha(admin: Admin, entrada: EntradaDeMensagem): Promis
       campanha: casada.id,
     });
   } catch (err) {
+    if (entrada.strictEffects) throw err;
     logger.warn("pos-entrada: avaliação de campanha falhou (o despacho segue)", {
       organization_id: entrada.organizationId,
       conversation_id: entrada.conversationId,
@@ -212,7 +215,7 @@ async function aplicarOptOut(admin: Admin, entrada: EntradaDeMensagem): Promise<
       .eq("id", entrada.contactId);
 
     if (error) {
-      // Falhar em silêncio aqui é o pior desfecho possível do arquivo inteiro:
+      if (entrada.strictEffects) throw new Error("ryze_optout_failed");
       // o cliente pediu para sair, o sistema não gravou, e a campanha segue
       // escrevendo. Por isso é `error` e não `warn`.
       logger.error("pos-entrada: opt-out NAO gravado — o contato segue recebendo", {
@@ -266,6 +269,7 @@ async function abrirDemanda(admin: Admin, entrada: EntradaDeMensagem): Promise<v
       ...(nascimento.criado ? { lead_id: nascimento.leadId } : { motivo: nascimento.motivo }),
     });
   } catch (err) {
+    if (entrada.strictEffects) throw err;
     logger.error("pos-entrada: nascimento do lead falhou (a mensagem entra assim mesmo)", {
       organization_id: entrada.organizationId,
       conversation_id: entrada.conversationId,
@@ -306,6 +310,7 @@ async function pedirDespachoDoAgente(admin: Admin, entrada: EntradaDeMensagem): 
   } as never);
 
   if (error) {
+    if (entrada.strictEffects) throw new Error("ryze_dispatch_failed");
     logger.warn("pos-entrada: emit ai_agent.dispatch_requested falhou", {
       organization_id: entrada.organizationId,
       message_id: entrada.messageId,

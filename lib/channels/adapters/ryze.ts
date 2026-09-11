@@ -4,6 +4,7 @@ import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
 import { resolveRyzeCreds } from "../ryze/credentials";
 import type {
   ChannelAdapter,
+  ChannelHealth,
   OutboundEnvelope,
   RecipientInput,
 } from "../types";
@@ -63,6 +64,35 @@ export const ryzeAdapter: ChannelAdapter = {
       return input.waIdentity.replace("lid:", "");
     }
     return null;
+  },
+
+  async checkHealth(input: { organizationId: string; sessionRef: string }): Promise<ChannelHealth> {
+    const admin = createAdminClient();
+    const creds = await resolveRyzeCreds(admin, {
+      organizationId: input.organizationId,
+      instanceName: input.sessionRef,
+    });
+    if (!creds) {
+      return { reachable: false, status: null, detail: "transporte_nao_configurado" };
+    }
+
+    const baseUrl = creds.baseUrl || "https://ryzeapi.cloud";
+    const parsedUrl = new URL(baseUrl);
+    assertSafeOutboundUrl(parsedUrl.toString());
+    await assertDestinoResolvidoSeguro(parsedUrl.hostname);
+
+    try {
+      const response = await fetch(`${baseUrl}/api/instance/connectionState/${encodeURIComponent(creds.instanceName)}`, {
+        headers: { token: creds.tokenInstance },
+      });
+      if (!response.ok) {
+        return { reachable: false, status: null, detail: sanitizeRyzeError(response.status, null, creds.tokenInstance) };
+      }
+      const body = (await response.json().catch(() => null)) as { state?: string; status?: string } | null;
+      return { reachable: true, status: body?.state ?? body?.status ?? null, detail: null };
+    } catch {
+      return { reachable: false, status: null, detail: "ryze_health_unreachable" };
+    }
   },
 
   isConfigured(): boolean {

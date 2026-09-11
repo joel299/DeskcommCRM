@@ -210,6 +210,25 @@ const PROVA_PROPRIA: readonly Excecao[] = [
       "da organização viraram venda, e quem o lê é o servidor com o admin client " +
       "filtrando organization_id à mão (a tela `/app/settings/conversoes`).",
   },
+  {
+    tabela: "ryze_webhook_events",
+    razao:
+      "tests/invariants/ryze-provider-schema.test.ts — ACL service-only e RLS " +
+      "confirmadas para anon/authenticated/service_role; evento bruto não é " +
+      "exposto pelo PostgREST.",
+  },
+  {
+    tabela: "ryze_message_effects",
+    razao:
+      "tests/invariants/ryze-provider-schema.test.ts — ACL service-only e RLS " +
+      "confirmadas; claims e finalização ficam restritos às RPCs do servidor.",
+  },
+  {
+    tabela: "ryze_message_dispatches",
+    razao:
+      "tests/invariants/ryze-provider-schema.test.ts — ACL service-only e RLS " +
+      "confirmadas; ledger de dispatch não é acessível por anon/authenticated.",
+  },
 ];
 
 /**

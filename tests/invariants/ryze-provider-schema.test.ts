@@ -238,7 +238,7 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     expect(rpcDenied).toMatch(/permission denied|not exist/);
   });
   it("0214 standalone apply e reapply permanecem idempotentes no upgrade", () => {
-    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260911003000_0214_ryze_message_effects.sql"), "utf8");
+    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260911003000_0235_ryze_message_effects.sql"), "utf8");
     expect(() => sql(migration)).not.toThrow();
     expect(() => sql(migration)).not.toThrow();
     expect(sql("select to_regclass('public.ryze_message_effects')").trim()).toBe("ryze_message_effects");
@@ -285,10 +285,29 @@ describe("0210 · schema e invariantes do provider ryze", () => {
   });
 
   it("0216 pode ser reaplicada e mantém a função com advisory lock", () => {
-    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260911011000_0216_ryze_dispatch_lock.sql"), "utf8");
+    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260911011000_0237_ryze_dispatch_lock.sql"), "utf8");
     expect(() => sql(migration)).not.toThrow();
     expect(() => sql(migration)).not.toThrow();
     expect(sql("select pg_get_functiondef('public.fn_emit_ryze_dispatch_once(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)'::regprocedure) like '%pg_advisory_xact_lock%'").trim()).toBe("t");
+  });
+
+  it("0212/0214/0215 congelam ACL service-only das tabelas Ryze", () => {
+    const checks = sql(`
+      select
+        has_table_privilege('anon','public.ryze_webhook_events','select'),
+        has_table_privilege('authenticated','public.ryze_webhook_events','select'),
+        has_table_privilege('service_role','public.ryze_webhook_events','select'),
+        has_table_privilege('anon','public.ryze_message_effects','select'),
+        has_table_privilege('authenticated','public.ryze_message_effects','select'),
+        has_table_privilege('service_role','public.ryze_message_effects','select'),
+        has_table_privilege('anon','public.ryze_message_dispatches','select'),
+        has_table_privilege('authenticated','public.ryze_message_dispatches','select'),
+        has_table_privilege('service_role','public.ryze_message_dispatches','select'),
+        (select relrowsecurity from pg_class where oid='public.ryze_webhook_events'::regclass),
+        (select relrowsecurity from pg_class where oid='public.ryze_message_effects'::regclass),
+        (select relrowsecurity from pg_class where oid='public.ryze_message_dispatches'::regclass)
+    `).trim();
+    expect(checks).toBe("f|f|t|f|f|t|f|f|t|t|t|t");
   });
 
   it("0214/0215 congelam ACL anon/authenticated negada e service_role permitida", () => {

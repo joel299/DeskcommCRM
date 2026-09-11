@@ -212,6 +212,28 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     expect(duplicate).toMatch(/ryze_webhook_events_pkey/);
     expect(sql(`insert into public.ryze_webhook_events (organization_id,channel_session_id,event_id,event_type) values ('${org}','${session2}','event-1','message.status'); select 'ok';`)).toContain("ok");
   });
+  it("0214 claim de efeitos é idempotente, recuperável e possui fencing real", () => {
+    const org = "00000000-0000-0000-0000-000000000011";
+    const session = "00000000-0000-0000-0000-000000000012";
+    const message = "00000000-0000-0000-0000-000000000013";
+    const conversation = "00000000-0000-0000-0000-000000000014";
+    const contact = "00000000-0000-0000-0000-000000000015";
+    const first = sql(`select claimed, claim_token from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`);
+    expect(first).toMatch(/t/);
+    const second = sql(`select claimed from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`).trim();
+    expect(second).toBe("f");
+    const token = sql(`select claim_token from public.ryze_message_effects where message_id='${message}'`).trim();
+    expect(sql(`select public.fn_finish_ryze_message_effects('${org}','${session}','${message}','00000000-0000-0000-0000-000000000099')`).trim()).toBe("f");
+    expect(sql(`select public.fn_finish_ryze_message_effects('${org}','${session}','${message}','${token}')`).trim()).toBe("t");
+    expect(sql(`select claimed from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`).trim()).toBe("f");
+  });
+
+  it("0214 restringe tabela e RPCs para anon/authenticated e mantém service_role", () => {
+    const tableDenied = erroDe(() => sql("set role anon; select count(*) from public.ryze_message_effects;"));
+    expect(tableDenied).toMatch(/permission denied|not exist/);
+    const rpcDenied = erroDe(() => sql("set role authenticated; select * from public.fn_claim_ryze_message_effects('00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000012','00000000-0000-0000-0000-000000000016','00000000-0000-0000-0000-000000000014','00000000-0000-0000-0000-000000000015','x',now());"));
+    expect(rpcDenied).toMatch(/permission denied|not exist/);
+  });
   it("sessões legadas (waha, meta_cloud, zernio) continuam válidas e protegidas pelas constraints", () => {
     const org = novaOrg(`inv-ryze-legado-${Date.now()}`);
     const resWaha = insertSession(org, { waha_session_name: `'s-waha-${Date.now()}'` });

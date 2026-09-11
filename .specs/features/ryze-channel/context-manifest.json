@@ -17,6 +17,7 @@
     "lib/channels/session-ref.ts",
     "lib/channels/adapters/ryze.ts",
     "lib/channels/ryze/**",
+    "lib/channels/pos-entrada.ts",
     "app/api/v1/webhooks/channel/[token]/route.ts",
     "scripts/lint-channels.pattern.ts",
     "tests/unit/*ryze*",

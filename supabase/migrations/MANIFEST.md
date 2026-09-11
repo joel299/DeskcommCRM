@@ -287,6 +287,7 @@ To re-apply on a fresh Supabase project, replay the migrations in version order 
 | `20260907040000` | `0228_roteamento_por_canal_e_reservas` | Responsáveis por canal, claim automático com capacidade global e retry durável; reserva WAHA com recibo privado, lease e retry da mesma identidade. Independente de 0227; baseline PG15. |
 | `20260907050000` | `0229_mfa_e_lgpd_agenda` | MFA nas quatro ações humanas, ordem de locks LGPD/agenda e footprint de avisos de presença/Meet na redação; baseline e backfill idempotentes. |
 | `20260911010000` | `0215_ryze_dispatch_once` | Dispatch durável exactly-once por mensagem Ryze, com RPC transacional e ACL service_role-only; baseline sincronizado. |
+| `20260911011000` | `0216_ryze_dispatch_lock` | Forward-fix de concorrência: advisory lock transacional antes de qualquer leitura/emissão do dispatch Ryze. |
 
 | `20260907060000` | `0230_reserva_pre_go_live` | A reserva transacional de novos canais WAHA preserva o pré-go-live da plataforma; retry mantém política e identidade existentes. Forward-fix da integração, sem alterar 0228 aplicada. |
 | `20260910180000` | `0231_canal_ryze_vocabulario` | Vocabulário e colunas de identificador para o provider Ryze API. |

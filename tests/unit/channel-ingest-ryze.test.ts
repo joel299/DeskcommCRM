@@ -14,6 +14,8 @@ function adminFake(options: {
   outgoing?: QueryResult;
   eventDuplicateAfterFirst?: boolean;
   finishError?: boolean;
+  releaseError?: boolean;
+  releaseFalse?: boolean;
 } = {}) {
   let eventClaims = 0;
   const calls: Array<{ op: string; table?: string; values?: unknown }> = [];
@@ -30,7 +32,10 @@ function adminFake(options: {
     if (name === "fn_claim_ryze_message_effects") return options.insert?.error?.code === "23505"
       ? { data: [{ outcome: "already_processed", claim_token: null }], error: null }
       : { data: [{ outcome: "claimed", claim_token: "effect-claim-1" }], error: null };
-    if (name === "fn_fail_ryze_message_effects") return { data: true, error: null };
+    if (name === "fn_emit_ryze_dispatch_once") return { data: [{ outcome: "processed", event_id: "event-dispatch-1" }], error: null };
+    if (name === "fn_fail_ryze_message_effects") return options.releaseError
+      ? { data: null, error: { message: "release rpc failed" } }
+      : options.releaseFalse ? { data: false, error: null } : { data: true, error: null };
     if (name === "fn_finish_ryze_message_effects") return { data: true, error: null };
     if (name === "fn_finish_ryze_webhook_event") return options.finishError
       ? { data: false, error: null }
@@ -180,6 +185,20 @@ describe("Ryze ingestão F4", () => {
     await expect(ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") }))
       .rejects.toThrow("ryze_event_finish_failed");
   });
+  it("detecta fn_fail=false e preserva a falha original", async () => {
+    efeitos.aplicar.mockRejectedValueOnce(new Error("external effect failure"));
+    const { admin } = adminFake({ releaseFalse: true });
+    await expect(ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") }))
+      .rejects.toThrow(/external effect failure.*release_failed:fn_fail_ryze_message_effects_false/);
+  });
+
+  it("detecta erro da fn_fail sem converter a ingestão em sucesso", async () => {
+    efeitos.aplicar.mockRejectedValueOnce(new Error("external effect failure"));
+    const { admin } = adminFake({ releaseError: true });
+    await expect(ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") }))
+      .rejects.toThrow(/external effect failure.*release_failed:release rpc failed/);
+  });
+
   it("echo outgoing protege estados terminais e failed contra regressão", async () => {
     const { admin, calls } = adminFake({ outgoing: { data: [{ id: "message-1" }], error: null } });
     await ingestRyzeInbound(admin, { ...base, envelope: envelope("outgoing", { status: "sent" }) });

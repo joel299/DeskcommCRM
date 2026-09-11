@@ -1,0 +1,68 @@
+-- F4 Ryze: dispatch durável exactly-once por mensagem.
+create table if not exists public.ryze_message_dispatches (
+  organization_id uuid not null,
+  channel_session_id uuid not null,
+  message_id uuid not null,
+  event_type text not null check (event_type = 'ai_agent.dispatch_requested'),
+  state text not null default 'processed' check (state = 'processed'),
+  event_id uuid not null,
+  created_at timestamptz not null default now(),
+  primary key (organization_id, channel_session_id, message_id),
+  unique (organization_id, channel_session_id, event_type, message_id)
+);
+
+alter table public.ryze_message_dispatches enable row level security;
+revoke all on table public.ryze_message_dispatches from public, anon, authenticated;
+grant all on table public.ryze_message_dispatches to service_role;
+
+drop function if exists public.fn_emit_ryze_dispatch_once(uuid, uuid, uuid, uuid, uuid, uuid, jsonb, jsonb);
+create or replace function public.fn_emit_ryze_dispatch_once(
+  p_org uuid,
+  p_session uuid,
+  p_message uuid,
+  p_conversation uuid,
+  p_contact uuid,
+  p_request uuid,
+  p_payload jsonb,
+  p_metadata jsonb
+)
+returns table (outcome text, event_id uuid)
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_event uuid;
+  v_rows integer;
+begin
+  select d.event_id into v_event
+    from public.ryze_message_dispatches as d
+   where d.organization_id=p_org and d.channel_session_id=p_session and d.message_id=p_message
+     and d.event_type='ai_agent.dispatch_requested';
+  if v_event is not null then
+    return query select 'already_processed'::text, v_event;
+    return;
+  end if;
+
+  v_event := public.emit_event(
+    'ai_agent.dispatch_requested', 'message', p_message,
+    coalesce(p_payload, '{}'::jsonb),
+    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object('request_id', p_request),
+    p_org
+  );
+
+  insert into public.ryze_message_dispatches
+    (organization_id, channel_session_id, message_id, event_type, event_id)
+  values (p_org, p_session, p_message, 'ai_agent.dispatch_requested', v_event)
+  on conflict (organization_id, channel_session_id, message_id) do nothing;
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    select d.event_id into v_event from public.ryze_message_dispatches as d
+     where d.organization_id=p_org and d.channel_session_id=p_session and d.message_id=p_message;
+    return query select 'already_processed'::text, v_event;
+    return;
+  end if;
+  return query select 'processed'::text, v_event;
+end;
+$$;
+
+revoke all on function public.fn_emit_ryze_dispatch_once(uuid, uuid, uuid, uuid, uuid, uuid, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.fn_emit_ryze_dispatch_once(uuid, uuid, uuid, uuid, uuid, uuid, jsonb, jsonb) to service_role;

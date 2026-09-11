@@ -209,12 +209,20 @@ async function completarPosEntrada(
       organizationId: input.organizationId, contactId, conversationId, messageId,
       channelSessionId: input.channelSessionId, texto: preview || null,
       nomeDoContato: null, origem: "ryze_webhook", strictEffects: true,
+      durableDispatch: true,
     });
   } catch (error) {
-    await admin.rpc("fn_fail_ryze_message_effects" as never, {
+    const released = await admin.rpc("fn_fail_ryze_message_effects" as never, {
       p_org: input.organizationId, p_session: input.channelSessionId, p_message: messageId,
       p_claim_token: claimRow.claim_token,
     });
+    const releaseOk = !released.error && (released.data === true || (Array.isArray(released.data) && released.data[0] === true));
+    if (!releaseOk) {
+      const original = error instanceof Error ? error : new Error("ryze_post_effects_failed");
+      const releaseFailure = released.error?.message ?? "fn_fail_ryze_message_effects_false";
+      original.message = `${original.message}; release_failed:${releaseFailure}`;
+      throw original;
+    }
     throw error;
   }
 

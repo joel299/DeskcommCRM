@@ -1,4 +1,4 @@
--- Migration: 20260910180000_0210_canal_ryze_vocabulario.sql
+-- Migration: 20260910180000_0238_canal_ryze_vocabulario.sql
 -- Descricao: Vocabulario e colunas de identificador para o provider Ryze API
 
 alter table public.channel_sessions

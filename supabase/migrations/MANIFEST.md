@@ -290,4 +290,5 @@ To re-apply on a fresh Supabase project, replay the migrations in version order 
 | `20260911011000` | `0237_ryze_dispatch_lock` | Forward-fix de concorrência: advisory lock transacional antes de qualquer leitura/emissão do dispatch Ryze. |
 
 | `20260907060000` | `0230_reserva_pre_go_live` | A reserva transacional de novos canais WAHA preserva o pré-go-live da plataforma; retry mantém política e identidade existentes. Forward-fix da integração, sem alterar 0228 aplicada. |
-| `20260910180000` | `0210_canal_ryze_vocabulario` | Vocabulário e colunas de identificador para o provider Ryze API. |
+| `20260811200000` | `0151_arquivo_do_webhook_por_canal` | Preserva o arquivo do payload bruto por canal, com organização e sessão como escopo explícito. |
+| `20260910180000` | `0238_canal_ryze_vocabulario` | Vocabulário e colunas de identificador para o provider Ryze API. |

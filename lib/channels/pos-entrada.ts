@@ -105,6 +105,8 @@ export interface EntradaDeMensagem {
   origem: string;
   /** Faz falhas pós-entrada serem retryable para boundaries duráveis. */
   strictEffects?: boolean;
+  /** Usa outbox transacional para o dispatch Ryze. */
+  durableDispatch?: boolean;
 }
 
 /**
@@ -215,7 +217,7 @@ async function aplicarOptOut(admin: Admin, entrada: EntradaDeMensagem): Promise<
       .eq("id", entrada.contactId);
 
     if (error) {
-      if (entrada.strictEffects) throw new Error("ryze_optout_failed");
+      if (entrada.strictEffects) throw new Error("pos_entrada_optout_failed");
       // o cliente pediu para sair, o sistema não gravou, e a campanha segue
       // escrevendo. Por isso é `error` e não `warn`.
       logger.error("pos-entrada: opt-out NAO gravado — o contato segue recebendo", {
@@ -295,28 +297,43 @@ async function abrirDemanda(admin: Admin, entrada: EntradaDeMensagem): Promise<v
 async function pedirDespachoDoAgente(admin: Admin, entrada: EntradaDeMensagem): Promise<void> {
   if (!entrada.messageId) return;
 
-  const { error } = await admin.rpc("emit_event" as never, {
-    p_event_type: "ai_agent.dispatch_requested",
-    p_entity_kind: "message",
-    p_entity_id: entrada.messageId,
-    p_payload: {
-      organization_id: entrada.organizationId,
-      conversation_id: entrada.conversationId,
-      contact_id: entrada.contactId,
-      channel_session_id: entrada.channelSessionId,
-      inbound_message_id: entrada.messageId,
-    },
-    p_metadata: { source: entrada.origem, request_id: entrada.requestId },
-    p_organization_id: entrada.organizationId,
-  } as never);
+  const payload = {
+    organization_id: entrada.organizationId,
+    conversation_id: entrada.conversationId,
+    contact_id: entrada.contactId,
+    channel_session_id: entrada.channelSessionId,
+    inbound_message_id: entrada.messageId,
+  };
+  const metadata = { source: entrada.origem };
+  const response = entrada.durableDispatch
+    ? await admin.rpc("fn_emit_ryze_dispatch_once" as never, {
+        p_org: entrada.organizationId,
+        p_session: entrada.channelSessionId,
+        p_message: entrada.messageId,
+        p_conversation: entrada.conversationId,
+        p_contact: entrada.contactId,
+        p_request: entrada.requestId ?? null,
+        p_payload: payload,
+        p_metadata: metadata,
+      } as never)
+    : await admin.rpc("emit_event" as never, {
+        p_event_type: "ai_agent.dispatch_requested",
+        p_entity_kind: "message",
+        p_entity_id: entrada.messageId,
+        p_payload: payload,
+        p_metadata: { ...metadata, request_id: entrada.requestId },
+        p_organization_id: entrada.organizationId,
+      } as never);
 
-  if (error) {
-    if (entrada.strictEffects) throw new Error("ryze_dispatch_failed");
-    logger.warn("pos-entrada: emit ai_agent.dispatch_requested falhou", {
+  const row = Array.isArray(response.data) ? response.data[0] : response.data;
+  const durableFailed = entrada.durableDispatch && row?.outcome !== "processed" && row?.outcome !== "already_processed";
+  if (response.error || durableFailed) {
+    if (entrada.strictEffects) throw new Error("pos_entrada_dispatch_failed");
+    logger.warn("pos-entrada: dispatch do agente falhou", {
       organization_id: entrada.organizationId,
       message_id: entrada.messageId,
       origem: entrada.origem,
-      detail: error.message.slice(0, 160),
+      detail: response.error?.message?.slice(0, 160) ?? "resultado_invalido",
     });
   }
 }

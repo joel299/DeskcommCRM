@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 /* O adapter de persistência abaixo é um dublê parcial do cliente; o banco real é validado pelo test-db. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -234,6 +236,46 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     const rpcDenied = erroDe(() => sql("set role authenticated; select * from public.fn_claim_ryze_message_effects('00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000012','00000000-0000-0000-0000-000000000016','00000000-0000-0000-0000-000000000014','00000000-0000-0000-0000-000000000015','x',now());"));
     expect(rpcDenied).toMatch(/permission denied|not exist/);
   });
+  it("0214 standalone apply e reapply permanecem idempotentes no upgrade", () => {
+    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260911003000_0214_ryze_message_effects.sql"), "utf8");
+    expect(() => sql(migration)).not.toThrow();
+    expect(() => sql(migration)).not.toThrow();
+    expect(sql("select to_regclass('public.ryze_message_effects')").trim()).toBe("ryze_message_effects");
+  });
+
+  it("0215 garante dispatch exactly-once durável por mensagem", () => {
+    const org = novaOrg(`inv-ryze-dispatch-${Date.now()}`);
+    const session = "00000000-0000-0000-0000-000000000022";
+    const message = "00000000-0000-0000-0000-000000000023";
+    const conversation = "00000000-0000-0000-0000-000000000024";
+    const contact = "00000000-0000-0000-0000-000000000025";
+    const first = sql(`select outcome from public.fn_emit_ryze_dispatch_once('${org}','${session}','${message}','${conversation}','${contact}',null,'{}','{}')`).trim();
+    const second = sql(`select outcome from public.fn_emit_ryze_dispatch_once('${org}','${session}','${message}','${conversation}','${contact}',null,'{}','{}')`).trim();
+    expect(first).toBe("processed");
+    expect(second).toBe("already_processed");
+    expect(sql(`select count(*) from public.ryze_message_dispatches where organization_id='${org}' and channel_session_id='${session}' and message_id='${message}'`).trim()).toBe("1");
+    expect(sql(`select count(*) from public.event_log where organization_id='${org}' and event_type='ai_agent.dispatch_requested' and entity_id='${message}'`).trim()).toBe("1");
+  });
+
+  it("0214/0215 congelam ACL anon/authenticated negada e service_role permitida", () => {
+    const checks = sql(`
+      select
+        has_table_privilege('anon','public.ryze_message_effects','select'),
+        has_table_privilege('authenticated','public.ryze_message_effects','select'),
+        has_table_privilege('service_role','public.ryze_message_effects','select'),
+        has_table_privilege('anon','public.ryze_message_dispatches','select'),
+        has_table_privilege('authenticated','public.ryze_message_dispatches','select'),
+        has_table_privilege('service_role','public.ryze_message_dispatches','select'),
+        has_function_privilege('anon','public.fn_claim_ryze_message_effects(uuid,uuid,uuid,uuid,uuid,text,timestamptz)','execute'),
+        has_function_privilege('authenticated','public.fn_finish_ryze_message_effects(uuid,uuid,uuid,uuid)','execute'),
+        has_function_privilege('service_role','public.fn_fail_ryze_message_effects(uuid,uuid,uuid,uuid)','execute'),
+        has_function_privilege('anon','public.fn_emit_ryze_dispatch_once(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)','execute'),
+        has_function_privilege('authenticated','public.fn_emit_ryze_dispatch_once(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)','execute'),
+        has_function_privilege('service_role','public.fn_emit_ryze_dispatch_once(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)','execute')
+    `).trim();
+    expect(checks).toBe("f|f|t|f|f|t|f|f|t|f|f|t");
+  });
+
   it("sessões legadas (waha, meta_cloud, zernio) continuam válidas e protegidas pelas constraints", () => {
     const org = novaOrg(`inv-ryze-legado-${Date.now()}`);
     const resWaha = insertSession(org, { waha_session_name: `'s-waha-${Date.now()}'` });

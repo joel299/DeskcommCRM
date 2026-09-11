@@ -9499,11 +9499,15 @@ alter table public.channel_sessions
   add column if not exists zernio_account_id text;
 
 alter table public.channel_sessions
+  add column if not exists ryze_instance_name text,
+  add column if not exists ryze_token_encrypted bytea;
+
+alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_check;
 
 alter table public.channel_sessions
   add constraint channel_sessions_provider_check
-  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text]));
+  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text, 'ryze'::text]));
 
 alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_ref_check;
@@ -9512,7 +9516,8 @@ alter table public.channel_sessions
   add constraint channel_sessions_provider_ref_check check (
     (provider = 'waha'       and waha_session_name    is not null) or
     (provider = 'meta_cloud' and meta_phone_number_id is not null) or
-    (provider = 'zernio'     and zernio_account_id    is not null)
+    (provider = 'zernio'     and zernio_account_id    is not null) or
+    (provider = 'ryze'       and ryze_instance_name   is not null)
   );
 
 comment on column public.channel_sessions.zernio_account_id is
@@ -23325,30 +23330,11 @@ grant execute on function public.fn_reserve_channel_connection(uuid,uuid,text,te
 notify pgrst,'reload schema';
 
 -- -----------------------------------------------------------------------------
--- MIGRATION APÊNDICE: 20260910180000_0210_canal_ryze_vocabulario.sql
+-- MIGRATION APÊNDICE: 20260910180000_0238_canal_ryze_vocabulario.sql
 -- -----------------------------------------------------------------------------
 alter table public.channel_sessions
   add column if not exists ryze_instance_name text,
   add column if not exists ryze_token_encrypted bytea;
-
-alter table public.channel_sessions
-  drop constraint if exists channel_sessions_provider_check;
-
-alter table public.channel_sessions
-  add constraint channel_sessions_provider_check
-  check (provider in ('waha', 'meta_cloud', 'zernio', 'ryze'));
-
-alter table public.channel_sessions
-  drop constraint if exists channel_sessions_provider_ref_check;
-
-alter table public.channel_sessions
-  add constraint channel_sessions_provider_ref_check
-  check (
-    (provider = 'waha' and waha_session_name is not null) or
-    (provider = 'meta_cloud' and meta_phone_number_id is not null) or
-    (provider = 'zernio' and zernio_account_id is not null) or
-    (provider = 'ryze' and ryze_instance_name is not null)
-  );
 
 create unique index if not exists idx_channel_sessions_ryze_instance_name_active
   on public.channel_sessions (ryze_instance_name)

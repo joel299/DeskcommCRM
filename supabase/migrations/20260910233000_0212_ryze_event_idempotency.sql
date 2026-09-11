@@ -28,3 +28,7 @@ alter table public.ryze_webhook_events
 
 create index if not exists idx_ryze_webhook_events_created_at
   on public.ryze_webhook_events (created_at desc);
+
+alter table public.ryze_webhook_events enable row level security;
+revoke all on table public.ryze_webhook_events from anon, authenticated;
+grant all on table public.ryze_webhook_events to service_role;

@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { aplicarEfeitosPosEntrada } from "@/lib/channels/pos-entrada";
+import { canonicalPhoneBR } from "@/lib/channels/phone-variants";
 import type { RyzeEnvelope, RyzeExchangeMessage } from "./envelope";
-import { ryzeEventId, ryzeStatusDedupeKey } from "./envelope";
+import { ryzeEventId, ryzeMessageExternalId, ryzeStatusDedupeKey } from "./envelope";
 
 export type RyzeIngestResult =
   | { status: "ingested"; conversationId?: string; messageId?: string }
@@ -28,7 +29,7 @@ export async function ingestRyzeInbound(
 ): Promise<RyzeIngestResult> {
   const eventKey = input.envelope.event === "message.status"
     ? ryzeStatusDedupeKey(input.envelope)
-    : ryzeEventId(input.envelope);
+    : ryzeEventId(input.envelope) ?? ryzeMessageExternalId(input.envelope);
   if (eventKey) {
     const claimed = await claimRyzeEvent(admin, input, eventKey);
     if (!claimed) return { status: "duplicate" };
@@ -143,7 +144,12 @@ async function insertRyzeIncoming(admin: SupabaseClient, input: RyzeExchangeInpu
   if (!externalId || !identity) return { status: "ignored", reason: "incoming_sem_identidade_ou_external_id" };
 
   const contact = await admin.rpc("fn_upsert_wa_contact" as never, {
-    p_org: input.organizationId, p_kind: "phone", p_phone: identity, p_lid: null, p_chat_id: identity, p_notify: null,
+    p_org: input.organizationId,
+    p_kind: identity.kind,
+    p_phone: identity.phone,
+    p_lid: identity.lid,
+    p_chat_id: identity.chatId,
+    p_notify: null,
   });
   if (contact.error || !contact.data) throw new Error("ryze_contact_upsert_failed");
   const contactId = String(contact.data);
@@ -154,7 +160,8 @@ async function insertRyzeIncoming(admin: SupabaseClient, input: RyzeExchangeInpu
   if (conversation.error || !conversation.data) throw new Error("ryze_conversation_upsert_failed");
   const conversationId = String(conversation.data);
 
-  await admin.from("conversations").update({ provider_conversation_id: identity }).eq("id", conversationId).eq("organization_id", input.organizationId);
+  const providerConversationId = identity.chatId;
+  await admin.from("conversations").update({ provider_conversation_id: providerConversationId }).eq("id", conversationId).eq("organization_id", input.organizationId);
   const inserted = await admin.from("messages").insert({
     organization_id: input.organizationId,
     conversation_id: conversationId,
@@ -181,7 +188,7 @@ async function insertRyzeIncoming(admin: SupabaseClient, input: RyzeExchangeInpu
       await completarPosEntrada(admin, input, row.conversation_id, row.contact_id, row.id, row.body ?? "");
       return { status: "duplicate", conversationId: row.conversation_id };
     }
-    return { status: "duplicate", conversationId };
+    return { status: "ignored", reason: "duplicate_sem_readback" };
   }
   if (inserted.error || !inserted.data) throw new Error("ryze_message_insert_failed");
   const messageId = (inserted.data as { id: string }).id;
@@ -219,11 +226,19 @@ async function completarPosEntrada(
 }
 
 
-function resolveRyzeIdentity(message: RyzeExchangeMessage): string | null {
+function resolveRyzeIdentity(message: RyzeExchangeMessage): { kind: "phone" | "lid"; phone: string | null; lid: string | null; chatId: string } | null {
   const raw = message.remoteJid ?? message.from ?? null;
   if (!raw) return null;
-  const digits = raw.replace(/\D/g, "");
-  return digits.length >= 8 ? digits : null;
+  if (raw.includes("@g.us")) return null;
+  if (raw.includes("@lid")) {
+    const lid = raw.split("@")[0] ?? "";
+    return lid ? { kind: "lid", phone: null, lid, chatId: `lid:${lid}` } : null;
+  }
+  if (raw.includes("@c.us") || raw.includes("@s.whatsapp.net") || /^\+?[0-9][0-9 ()-]{7,}$/.test(raw)) {
+    const canonical = canonicalPhoneBR(raw);
+    return canonical ? { kind: "phone", phone: canonical, lid: null, chatId: `phone:${canonical}` } : null;
+  }
+  return null;
 }
 
 function blockedStatuses(status: "sent" | "delivered" | "read" | "failed"): string {

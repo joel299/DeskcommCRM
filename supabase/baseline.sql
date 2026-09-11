@@ -1906,6 +1906,9 @@ CREATE TABLE IF NOT EXISTS "public"."ryze_webhook_events" (
 );
 
 CREATE INDEX IF NOT EXISTS "idx_ryze_webhook_events_created_at" ON "public"."ryze_webhook_events" USING "btree" ("created_at" DESC);
+ALTER TABLE "public"."ryze_webhook_events" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE "public"."ryze_webhook_events" FROM "anon", "authenticated";
+GRANT ALL ON TABLE "public"."ryze_webhook_events" TO "service_role";
 
 ALTER TABLE "public"."webhook_events_log" OWNER TO "postgres";
 

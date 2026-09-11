@@ -8,6 +8,7 @@
     ".specs/features/ryze-channel/design.md",
     ".specs/features/ryze-channel/tasks.md",
     ".specs/features/ryze-channel/context-manifest.json",
+    ".specs/features/ryze-channel/fixtures/**",
     "lib/channels/types.ts",
     "lib/channels/capabilities.ts",
     "lib/channels/index.ts",

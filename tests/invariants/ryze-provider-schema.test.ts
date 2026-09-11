@@ -218,14 +218,14 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     const message = "00000000-0000-0000-0000-000000000013";
     const conversation = "00000000-0000-0000-0000-000000000014";
     const contact = "00000000-0000-0000-0000-000000000015";
-    const first = sql(`select claimed, claim_token from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`);
-    expect(first).toMatch(/t/);
-    const second = sql(`select claimed from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`).trim();
-    expect(second).toBe("f");
+    const first = sql(`select outcome, claim_token from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`);
+    expect(first).toMatch(/claimed/);
+    const second = sql(`select outcome from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`).trim();
+    expect(second).toBe("busy");
     const token = sql(`select claim_token from public.ryze_message_effects where message_id='${message}'`).trim();
     expect(sql(`select public.fn_finish_ryze_message_effects('${org}','${session}','${message}','00000000-0000-0000-0000-000000000099')`).trim()).toBe("f");
     expect(sql(`select public.fn_finish_ryze_message_effects('${org}','${session}','${message}','${token}')`).trim()).toBe("t");
-    expect(sql(`select claimed from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`).trim()).toBe("f");
+    expect(sql(`select outcome from public.fn_claim_ryze_message_effects('${org}','${session}','${message}','${conversation}','${contact}','teste',now())`).trim()).toBe("already_processed");
   });
 
   it("0214 restringe tabela e RPCs para anon/authenticated e mantém service_role", () => {

@@ -28,8 +28,8 @@ function adminFake(options: {
         : { data: [{ claimed: true, claim_token: `claim-${eventClaims}` }], error: null };
     }
     if (name === "fn_claim_ryze_message_effects") return options.insert?.error?.code === "23505"
-      ? { data: [{ claimed: false, claim_token: null }], error: null }
-      : { data: [{ claimed: true, claim_token: "effect-claim-1" }], error: null };
+      ? { data: [{ outcome: "already_processed", claim_token: null }], error: null }
+      : { data: [{ outcome: "claimed", claim_token: "effect-claim-1" }], error: null };
     if (name === "fn_finish_ryze_message_effects") return { data: true, error: null };
     if (name === "fn_finish_ryze_webhook_event") return options.finishError
       ? { data: false, error: null }

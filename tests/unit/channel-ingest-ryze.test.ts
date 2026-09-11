@@ -13,6 +13,7 @@ function adminFake(options: {
   status?: QueryResult;
   outgoing?: QueryResult;
   eventDuplicateAfterFirst?: boolean;
+  finishError?: boolean;
 } = {}) {
   let eventClaims = 0;
   const calls: Array<{ op: string; table?: string; values?: unknown }> = [];
@@ -20,7 +21,15 @@ function adminFake(options: {
     calls.push({ op: name });
     if (name === "fn_upsert_wa_contact") return { data: "contact-1", error: null };
     if (name === "fn_upsert_wa_conversation") return { data: "conversation-1", error: null };
-    if (name === "fn_mark_conversation_message") return { data: null, error: null };
+    if (name === "fn_claim_ryze_webhook_event") {
+      eventClaims += 1;
+      return options.eventDuplicateAfterFirst && eventClaims > 1
+        ? { data: [{ claimed: false, claim_token: null }], error: null }
+        : { data: [{ claimed: true, claim_token: `claim-${eventClaims}` }], error: null };
+    }
+    if (name === "fn_finish_ryze_webhook_event") return options.finishError
+      ? { data: false, error: null }
+      : { data: true, error: null };
     return { data: null, error: null };
   });
   const from = vi.fn((table: string) => {
@@ -150,6 +159,22 @@ describe("Ryze ingestão F4", () => {
     expect(calls.filter((call) => call.op === "insert" && call.table === "messages")).toHaveLength(1);
   });
 
+  it("claim atômico permite somente um worker concorrente", async () => {
+    efeitos.aplicar.mockClear();
+    const { admin } = adminFake({ eventDuplicateAfterFirst: true });
+    const results = await Promise.all([
+      ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") }),
+      ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") }),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual(["duplicate", "ingested"]);
+    expect(efeitos.aplicar).toHaveBeenCalledTimes(1);
+  });
+
+  it("não ignora falha de fencing na finalização", async () => {
+    const { admin } = adminFake({ finishError: true });
+    await expect(ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") }))
+      .rejects.toThrow("ryze_event_finish_failed");
+  });
   it("echo outgoing protege estados terminais e failed contra regressão", async () => {
     const { admin, calls } = adminFake({ outgoing: { data: [{ id: "message-1" }], error: null } });
     await ingestRyzeInbound(admin, { ...base, envelope: envelope("outgoing", { status: "sent" }) });

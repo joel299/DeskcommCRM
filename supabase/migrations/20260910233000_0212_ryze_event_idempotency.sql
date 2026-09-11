@@ -18,7 +18,8 @@ alter table public.ryze_webhook_events
   add column if not exists attempts integer not null default 1,
   add column if not exists locked_until timestamptz not null default (now() + interval '5 minutes'),
   add column if not exists completed_at timestamptz,
-  add column if not exists last_error_code text;
+  add column if not exists last_error_code text,
+  add column if not exists claim_token uuid;
 
 alter table public.ryze_webhook_events
   drop constraint if exists ryze_webhook_events_state_check;

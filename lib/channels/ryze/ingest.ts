@@ -31,14 +31,14 @@ export async function ingestRyzeInbound(
     ? ryzeStatusDedupeKey(input.envelope)
     : ryzeEventId(input.envelope) ?? ryzeMessageExternalId(input.envelope);
   if (eventKey) {
-    const claimed = await claimRyzeEvent(admin, input, eventKey);
-    if (!claimed) return { status: "duplicate" };
+    const claimToken = await claimRyzeEvent(admin, input, eventKey);
+    if (!claimToken) return { status: "duplicate" };
     try {
       const result = await processRyzeEvent(admin, input);
-      await finishRyzeEvent(admin, input, eventKey, "processed");
+      await finishRyzeEvent(admin, input, eventKey, claimToken, "processed");
       return result;
     } catch (error) {
-      await finishRyzeEvent(admin, input, eventKey, "failed");
+      await finishRyzeEvent(admin, input, eventKey, claimToken, "failed");
       throw error;
     }
   }
@@ -52,45 +52,31 @@ async function processRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput): 
   return insertRyzeIncoming(admin, { ...input, envelope: input.envelope });
 }
 
-async function claimRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string): Promise<boolean> {
-  const inserted = await admin.from("ryze_webhook_events").insert({
-    organization_id: input.organizationId,
-    channel_session_id: input.channelSessionId,
-    event_id: eventId,
-    event_type: input.envelope.event,
-    state: "processing",
-  }).select("event_id").maybeSingle();
-  if (!inserted.error) return true;
-  if ((inserted.error as DbError)?.code !== "23505") throw new Error("ryze_event_dedupe_failed");
-
-  const current = await admin.from("ryze_webhook_events")
-    .select("state,locked_until")
-    .eq("organization_id", input.organizationId)
-    .eq("channel_session_id", input.channelSessionId)
-    .eq("event_id", eventId)
-    .maybeSingle();
-  const row = current.data as { state?: string; locked_until?: string } | null;
-  if (row?.state === "processed") return false;
-  if (row?.state === "processing" && row.locked_until && new Date(row.locked_until).getTime() > Date.now()) return false;
-
-  const reclaimed = await admin.from("ryze_webhook_events").update({
-    state: "processing",
-    attempts: 1,
-    locked_until: new Date(Date.now() + 5 * 60_000).toISOString(),
-    last_error_code: null,
-  }).eq("organization_id", input.organizationId).eq("channel_session_id", input.channelSessionId)
-    .eq("event_id", eventId).in("state", ["failed", "processing"]);
-  if (reclaimed.error) throw new Error("ryze_event_reclaim_failed");
-  return true;
+async function claimRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string): Promise<string | null> {
+  const response = await admin.rpc("fn_claim_ryze_webhook_event", {
+    p_org: input.organizationId,
+    p_session: input.channelSessionId,
+    p_event: eventId,
+    p_event_type: input.envelope.event,
+  });
+  if (response.error) throw new Error("ryze_event_claim_failed");
+  const row = Array.isArray(response.data) ? response.data[0] : response.data;
+  if (!row?.claimed || !row.claim_token) return null;
+  return row.claim_token as string;
 }
 
-async function finishRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string, state: "processed" | "failed"): Promise<void> {
-  await admin.from("ryze_webhook_events").update({
-    state,
-    completed_at: state === "processed" ? new Date().toISOString() : null,
-    locked_until: new Date().toISOString(),
-    last_error_code: state === "failed" ? "processing_failed" : null,
-  }).eq("organization_id", input.organizationId).eq("channel_session_id", input.channelSessionId).eq("event_id", eventId);
+async function finishRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, eventId: string, claimToken: string, state: "processed" | "failed"): Promise<void> {
+  const response = await admin.rpc("fn_finish_ryze_webhook_event", {
+    p_org: input.organizationId,
+    p_session: input.channelSessionId,
+    p_event: eventId,
+    p_claim_token: claimToken,
+    p_state: state,
+    p_error_code: state === "failed" ? "processing_failed" : null,
+  });
+  if (response.error || response.data !== true && !(Array.isArray(response.data) && response.data[0] === true)) {
+    throw new Error("ryze_event_finish_failed");
+  }
 }
 
 async function updateRyzeMessageStatus(admin: SupabaseClient, input: RyzeIngestInput): Promise<RyzeIngestResult> {

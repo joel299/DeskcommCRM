@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import pg from "pg";
 /* O adapter de persistência abaixo é um dublê parcial do cliente; o banco real é validado pelo test-db. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -255,6 +256,39 @@ describe("0210 · schema e invariantes do provider ryze", () => {
     expect(second).toBe("already_processed");
     expect(sql(`select count(*) from public.ryze_message_dispatches where organization_id='${org}' and channel_session_id='${session}' and message_id='${message}'`).trim()).toBe("1");
     expect(sql(`select count(*) from public.event_log where organization_id='${org}' and event_type='ai_agent.dispatch_requested' and entity_id='${message}'`).trim()).toBe("1");
+  });
+
+  it("0216 serializa duas conexões Postgres reais antes do emit_event", async () => {
+    const org = novaOrg(`inv-ryze-race-${Date.now()}`);
+    const session = "00000000-0000-0000-0000-000000000032";
+    const message = "00000000-0000-0000-0000-000000000033";
+    const conversation = "00000000-0000-0000-0000-000000000034";
+    const contact = "00000000-0000-0000-0000-000000000035";
+    const pool = new pg.Pool({ host: "127.0.0.1", port: Number(process.env.TEST_DB_PORT), user: "postgres", password: "postgres", database: "postgres", max: 2 });
+    try {
+      const args = [org, session, message, conversation, contact, null, "{}", "{}"];
+      const call = () => pool.query({
+        text: "select outcome, event_id from public.fn_emit_ryze_dispatch_once($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)",
+        values: args,
+      });
+      const [a, b] = await Promise.all([call(), call()]);
+      const outcomes = [String(a.rows[0]?.outcome), String(b.rows[0]?.outcome)].sort();
+      expect(outcomes).toEqual(["already_processed", "processed"]);
+      expect(sql(`select count(*) from public.ryze_message_dispatches where organization_id='${org}' and channel_session_id='${session}' and message_id='${message}'`).trim()).toBe("1");
+      expect(sql(`select count(*) from public.event_log where organization_id='${org}' and event_type='ai_agent.dispatch_requested' and entity_id='${message}'`).trim()).toBe("1");
+      const third = await call();
+      expect(third.rows[0]?.outcome).toBe("already_processed");
+      expect(sql(`select count(*) from public.event_log where organization_id='${org}' and event_type='ai_agent.dispatch_requested' and entity_id='${message}'`).trim()).toBe("1");
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("0216 pode ser reaplicada e mantém a função com advisory lock", () => {
+    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260911011000_0216_ryze_dispatch_lock.sql"), "utf8");
+    expect(() => sql(migration)).not.toThrow();
+    expect(() => sql(migration)).not.toThrow();
+    expect(sql("select pg_get_functiondef('public.fn_emit_ryze_dispatch_once(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)'::regprocedure) like '%pg_advisory_xact_lock%'").trim()).toBe("t");
   });
 
   it("0214/0215 congelam ACL anon/authenticated negada e service_role permitida", () => {

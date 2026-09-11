@@ -23457,6 +23457,9 @@ language plpgsql security definer set search_path = public
 as $$
 declare v_event uuid; v_rows integer;
 begin
+  perform pg_advisory_xact_lock(hashtextextended(
+    p_org::text || ':' || p_session::text || ':' || p_message::text || ':ai_agent.dispatch_requested', 0
+  ));
   select d.event_id into v_event from public.ryze_message_dispatches as d
    where d.organization_id=p_org and d.channel_session_id=p_session and d.message_id=p_message
      and d.event_type='ai_agent.dispatch_requested';

@@ -169,18 +169,20 @@ async function insertRyzeIncoming(admin: SupabaseClient, input: RyzeExchangeInpu
       .eq("channel_session_id", input.channelSessionId)
       .eq("external_id", externalId)
       .maybeSingle();
+    if (existing.error) throw new Error("ryze_duplicate_readback_failed");
     const row = existing.data as { id?: string; conversation_id?: string; contact_id?: string; body?: string | null } | null;
     if (row?.id && row.conversation_id && row.contact_id) {
-      await completarPosEntrada(admin, input, row.conversation_id, row.contact_id, row.id, row.body ?? "");
-      return { status: "duplicate", conversationId: row.conversation_id };
+      const applied = await completarPosEntrada(admin, input, row.conversation_id, row.contact_id, row.id, row.body ?? "");
+      return applied ? { status: "duplicate", conversationId: row.conversation_id } : { status: "duplicate", conversationId: row.conversation_id };
     }
-    return { status: "ignored", reason: "duplicate_sem_readback" };
+    throw new Error("ryze_duplicate_readback_missing");
   }
   if (inserted.error || !inserted.data) throw new Error("ryze_message_insert_failed");
   const messageId = (inserted.data as { id: string }).id;
   const preview = message.text ?? message.body ?? "";
 
-  await completarPosEntrada(admin, input, conversationId, contactId, messageId, preview);
+  const applied = await completarPosEntrada(admin, input, conversationId, contactId, messageId, preview);
+  if (!applied) throw new Error("ryze_post_effects_claim_lost");
   return { status: "ingested", conversationId, messageId };
 }
 
@@ -191,36 +193,43 @@ async function completarPosEntrada(
   contactId: string,
   messageId: string,
   preview: string,
-): Promise<void> {
-  try {
-    const marked = await admin.rpc("fn_mark_conversation_message" as never, {
-      p_conv: conversationId, p_direction: "inbound", p_preview: preview, p_at: new Date().toISOString(),
-    });
-    if (marked.error) throw new Error("ryze_conversation_mark_failed");
-  } catch {
-    // A mensagem persistida continua disponível para a recuperação no próximo retry.
+): Promise<boolean> {
+  const claimed = await admin.rpc("fn_claim_ryze_message_effects" as never, {
+    p_org: input.organizationId, p_session: input.channelSessionId, p_message: messageId,
+    p_conversation: conversationId, p_contact: contactId, p_preview: preview,
+    p_at: new Date().toISOString(),
+  });
+  if (claimed.error) throw new Error("ryze_conversation_mark_failed");
+  const claimRow = Array.isArray(claimed.data) ? claimed.data[0] : claimed.data;
+  if (!claimRow?.claimed || !claimRow.claim_token) return false;
+
+  await aplicarEfeitosPosEntrada(admin, {
+    organizationId: input.organizationId, contactId, conversationId, messageId,
+    channelSessionId: input.channelSessionId, texto: preview || null,
+    nomeDoContato: null, origem: "ryze_webhook",
+  });
+
+  const finished = await admin.rpc("fn_finish_ryze_message_effects" as never, {
+    p_org: input.organizationId, p_session: input.channelSessionId,
+    p_message: messageId, p_claim_token: claimRow.claim_token,
+  });
+  if (finished.error || (finished.data !== true && !(Array.isArray(finished.data) && finished.data[0] === true))) {
+    throw new Error("ryze_post_effects_finish_failed");
   }
-  try {
-    await aplicarEfeitosPosEntrada(admin, {
-      organizationId: input.organizationId, contactId, conversationId, messageId,
-      channelSessionId: input.channelSessionId, texto: preview || null,
-      nomeDoContato: null, origem: "ryze_webhook",
-    });
-  } catch {
-    // Efeitos são idempotentes e não podem transformar o webhook em retry storm.
-  }
+  return true;
 }
 
 
 function resolveRyzeIdentity(message: RyzeExchangeMessage): { kind: "phone" | "lid"; phone: string | null; lid: string | null; chatId: string } | null {
   const raw = message.remoteJid ?? message.from ?? null;
   if (!raw) return null;
-  if (raw.includes("@g.us")) return null;
-  if (raw.includes("@lid")) {
-    const lid = raw.split("@")[0] ?? "";
-    return lid ? { kind: "lid", phone: null, lid, chatId: `lid:${lid}` } : null;
+  const exactLid = /^(\d+)@lid$/.exec(raw);
+  if (exactLid) {
+    const lid = exactLid[1] ?? "";
+    return { kind: "lid", phone: null, lid, chatId: `lid:${lid}` };
   }
-  if (raw.includes("@c.us") || raw.includes("@s.whatsapp.net") || /^\+?[0-9][0-9 ()-]{7,}$/.test(raw)) {
+  if (/^\d+@g\.us$/.test(raw)) return null;
+  if (/^(?:\+?\d[\d ()-]{7,})@(?:c\.us|s\.whatsapp\.net)$/.test(raw) || /^\+?\d[\d ()-]{7,}$/.test(raw)) {
     const canonical = canonicalPhoneBR(raw);
     return canonical ? { kind: "phone", phone: canonical, lid: null, chatId: `phone:${canonical}` } : null;
   }

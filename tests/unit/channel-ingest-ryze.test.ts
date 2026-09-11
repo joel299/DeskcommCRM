@@ -27,6 +27,10 @@ function adminFake(options: {
         ? { data: [{ claimed: false, claim_token: null }], error: null }
         : { data: [{ claimed: true, claim_token: `claim-${eventClaims}` }], error: null };
     }
+    if (name === "fn_claim_ryze_message_effects") return options.insert?.error?.code === "23505"
+      ? { data: [{ claimed: false, claim_token: null }], error: null }
+      : { data: [{ claimed: true, claim_token: "effect-claim-1" }], error: null };
+    if (name === "fn_finish_ryze_message_effects") return { data: true, error: null };
     if (name === "fn_finish_ryze_webhook_event") return options.finishError
       ? { data: false, error: null }
       : { data: true, error: null };
@@ -106,7 +110,7 @@ describe("Ryze ingestão F4", () => {
     expect(result).toEqual({ status: "ingested", conversationId: "conversation-1", messageId: "message-1" });
     expect(calls.filter((call) => call.op === "fn_upsert_wa_contact")).toHaveLength(1);
     expect(calls.filter((call) => call.op === "fn_upsert_wa_conversation")).toHaveLength(1);
-    expect(calls.filter((call) => call.op === "fn_mark_conversation_message")).toHaveLength(1);
+    expect(calls.filter((call) => call.op === "fn_claim_ryze_message_effects")).toHaveLength(1);
     expect(efeitos.aplicar).toHaveBeenCalledTimes(1);
   });
 
@@ -116,7 +120,7 @@ describe("Ryze ingestão F4", () => {
     const result = await ingestRyzeInbound(admin, { ...base, envelope: envelope("incoming") });
 
     expect(result).toEqual({ status: "duplicate", conversationId: "conversation-1" });
-    expect(efeitos.aplicar).toHaveBeenCalledTimes(1);
+    expect(efeitos.aplicar).toHaveBeenCalledTimes(0);
   });
 
   it("outgoing reconcilia mensagem existente sem criar contato, conversa ou IA", async () => {

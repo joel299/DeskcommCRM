@@ -80,9 +80,12 @@ async function finishRyzeEvent(admin: SupabaseClient, input: RyzeIngestInput, ev
 
 async function updateRyzeMessageStatus(admin: SupabaseClient, input: RyzeIngestInput): Promise<RyzeIngestResult> {
   const message = input.envelope.data.message;
-  const externalId = message.id;
+  const externalIds = Array.from(new Set(
+    ("messageIds" in message && Array.isArray(message.messageIds) ? message.messageIds : [message.id])
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+  ));
   const status = normalizeStatus(message.status);
-  if (!externalId || !status) return { status: "ignored", reason: "status_sem_identificador_ou_status_invalido" };
+  if (externalIds.length === 0 || !status) return { status: "ignored", reason: "status_sem_identificador_ou_status_invalido" };
 
   const update: Record<string, unknown> = { status };
   const now = new Date().toISOString();
@@ -97,7 +100,7 @@ async function updateRyzeMessageStatus(admin: SupabaseClient, input: RyzeIngestI
     .update(update)
     .eq("organization_id", input.organizationId)
     .eq("channel_session_id", input.channelSessionId)
-    .eq("external_id", externalId)
+    .in("external_id", externalIds)
     .not("status", "in", blockedStatuses(status));
   const { data, error } = await query.select("id");
   if (error) throw new Error("ryze_status_update_failed");

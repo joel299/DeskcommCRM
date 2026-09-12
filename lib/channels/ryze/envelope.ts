@@ -23,6 +23,7 @@ const exchangeMessage = z.looseObject({
 
 const statusMessage = z.looseObject({
   id: text,
+  messageIds: z.array(text).optional(),
   status: z.enum(["sent", "delivered", "read", "failed"]),
   direction: z.enum(["incoming", "outgoing"]).optional(),
   text: z.string().nullable().optional(),
@@ -85,6 +86,7 @@ function normalizarPayloadRyze(parsed: unknown): unknown {
     status: rawMessage.status ?? source.status,
     remoteJid: rawMessage.remoteJid ?? senderJid ?? chatJid,
     text: rawMessage.text ?? (typeof content === "string" && content !== "{}" ? content : undefined),
+    messageIds: rawMessage.messageIds ?? (Array.isArray(source.messageIds) ? source.messageIds : undefined),
   };
   return { ...root, data: { ...source, message: normalizedMessage } };
 }

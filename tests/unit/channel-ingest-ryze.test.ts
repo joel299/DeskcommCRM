@@ -63,6 +63,10 @@ function adminFake(options: {
         return builder;
       },
       eq() { return builder; },
+      in(column: string, values: unknown[]) {
+        calls.push({ op: "in", values: { column, values } });
+        return builder;
+      },
       not(operator: string, column: string, value: string) {
         calls.push({ op: "not", values: { operator, column, value } });
         return builder;
@@ -155,6 +159,23 @@ describe("Ryze ingestão F4", () => {
     expect(calls.some((call) => call.op === "insert" && call.table === "messages")).toBe(false);
     expect(calls.some((call) => call.op === "fn_upsert_wa_contact")).toBe(false);
     expect(efeitos.aplicar).not.toHaveBeenCalled();
+  });
+
+  it("reconcilia todos os messageIds do status sem criar eco", async () => {
+    const { admin, calls } = adminFake({ status: { data: [{ id: "message-1" }, { id: "message-2" }], error: null } });
+    const result = await ingestRyzeInbound(admin, {
+      ...base,
+      envelope: {
+        event: "message.status",
+        data: { id: "delivery-ids-1", message: { id: "message-1", messageIds: ["message-1", "message-2"], status: "read" } },
+      },
+    });
+
+    expect(result).toEqual({ status: "ingested", messageId: "message-1" });
+    expect(calls.some((call) => call.op === "insert" && call.table === "messages")).toBe(false);
+    const update = calls.find((call) => call.op === "update" && call.table === "messages");
+    expect(update?.values).toMatchObject({ status: "read" });
+    expect(calls.some((call) => call.op === "not" && String((call.values as { value: string }).value).includes("failed"))).toBe(true);
   });
 
   it("deduplica reentrega pelo mesmo data.id e executa efeitos uma vez", async () => {

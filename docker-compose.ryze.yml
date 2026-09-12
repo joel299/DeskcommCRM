@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   app:
-    image: deskcomm-ryze:gru38-a336aecfd244997b981dc7307a4b85b75e5137a9
+    image: deskcomm-ryze:gru38-279581cc094bc131b392f4c33c0014e8f0feb7f1
     env_file:
       - .env.ryze-shadow
     environment:

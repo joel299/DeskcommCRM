@@ -68,8 +68,11 @@ function normalizarPayloadRyze(parsed: unknown): unknown {
   if (!data || typeof data !== "object") return parsed;
   const source = data as Record<string, unknown>;
   const message = source.message;
-  if (!message || typeof message !== "object") return parsed;
-  const rawMessage = message as Record<string, unknown>;
+  const statusMessage = !message && root.event === "message.status" && Array.isArray(source.messageIds)
+    ? { id: source.messageIds[0], status: source.status, direction: source.isFromMe ? "outgoing" : "incoming" }
+    : message;
+  if (!statusMessage || typeof statusMessage !== "object") return parsed;
+  const rawMessage = statusMessage as Record<string, unknown>;
   const sender = source.sender;
   const chat = source.chat;
   const senderJid = sender && typeof sender === "object" ? (sender as Record<string, unknown>).jid : undefined;

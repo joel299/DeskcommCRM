@@ -27,6 +27,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { env } from "@/lib/env";
 import { alvoDe, classificarFalhaDeAlcance, type FalhaDeAlcance } from "@/lib/net/alcance";
 import { validarConfigRedisRest } from "@/lib/redis-config";
+import { listRyzeInstances } from "@/lib/channels/ryze/control-plane";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -204,6 +205,33 @@ async function checkWaha(): Promise<Check> {
   }
 }
 
+async function checkRyze(): Promise<Check> {
+  const t0 = Date.now();
+  const base = process.env.RYZE_API_BASE_URL || "https://ryzeapi.cloud";
+  try {
+    const instances = await withTimeout(listRyzeInstances({ baseUrl: base }));
+    const connected = instances.some((instance) => String(instance.status ?? "").toLowerCase() === "connected");
+    if (!connected) {
+      return {
+        status: "down",
+        latency_ms: Date.now() - t0,
+        error: "no_connected_instance",
+        reason: "resposta_inesperada",
+        target: alvoDe(base),
+      };
+    }
+    return { status: "ok", latency_ms: Date.now() - t0, target: alvoDe(base) };
+  } catch (e) {
+    return {
+      status: "down",
+      latency_ms: Date.now() - t0,
+      error: e instanceof Error ? e.message : String(e),
+      reason: classificarFalhaDeAlcance(e),
+      target: alvoDe(base),
+    };
+  }
+}
+
 /**
  * O segredo interno dos crons também abre o modo verboso. Mesmo contrato de
  * `/api/v1/system/agent`: Bearer, comparação em tempo constante, e segredo vazio
@@ -262,15 +290,20 @@ function semAlvo(check: Check): Check {
 }
 
 export async function GET(req: NextRequest) {
-  const [supabase, redis, waha] = await Promise.all([
+  const activeProvider = env.ACTIVE_CHANNEL_PROVIDER;
+  const [supabase, redis, channel] = await Promise.all([
     checkSupabase(),
     checkRedis(),
-    checkWaha(),
+    activeProvider === "ryze" ? checkRyze() : checkWaha(),
   ]);
 
   const verboso = req.nextUrl.searchParams.get("verbose") === "1" && segredoInternoConfere(req);
   const filtrar = verboso ? (c: Check) => c : semAlvo;
-  const checks = { supabase: filtrar(supabase), redis: filtrar(redis), waha: filtrar(waha) };
+  const checks = {
+    supabase: filtrar(supabase),
+    redis: filtrar(redis),
+    [activeProvider === "ryze" ? "ryze" : "waha"]: filtrar(channel),
+  };
 
   const anyDown = Object.values(checks).some((c) => c.status === "down");
   const anyDegraded = Object.values(checks).some((c) => c.status === "degraded");

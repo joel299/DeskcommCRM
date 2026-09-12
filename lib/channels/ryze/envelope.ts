@@ -61,10 +61,35 @@ export type RyzeWebhookParse =
   | { ok: true; kind: "unsupported"; event: string }
   | { ok: false; motivo: "json_invalido" | "contrato_violado"; campos: string[] };
 
+function normalizarPayloadRyze(parsed: unknown): unknown {
+  if (!parsed || typeof parsed !== "object") return parsed;
+  const root = parsed as Record<string, unknown>;
+  const data = root.data;
+  if (!data || typeof data !== "object") return parsed;
+  const source = data as Record<string, unknown>;
+  const message = source.message;
+  if (!message || typeof message !== "object") return parsed;
+  const rawMessage = message as Record<string, unknown>;
+  const sender = source.sender;
+  const chat = source.chat;
+  const senderJid = sender && typeof sender === "object" ? (sender as Record<string, unknown>).jid : undefined;
+  const chatJid = chat && typeof chat === "object" ? (chat as Record<string, unknown>).jid : undefined;
+  const content = rawMessage.content;
+  const normalizedMessage: Record<string, unknown> = {
+    ...rawMessage,
+    id: rawMessage.id ?? source.id ?? (Array.isArray(source.messageIds) ? source.messageIds[0] : undefined),
+    direction: rawMessage.direction ?? source.direction,
+    status: rawMessage.status ?? source.status,
+    remoteJid: rawMessage.remoteJid ?? senderJid ?? chatJid,
+    text: rawMessage.text ?? (typeof content === "string" && content !== "{}" ? content : undefined),
+  };
+  return { ...root, data: { ...source, message: normalizedMessage } };
+}
+
 export function lerEnvelopeRyze(rawBody: string): LeituraDeEnvelope<RyzeEnvelope> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawBody);
+    parsed = normalizarPayloadRyze(JSON.parse(rawBody));
   } catch {
     return { ok: false, motivo: "json_invalido", campos: [] };
   }
@@ -74,7 +99,7 @@ export function lerEnvelopeRyze(rawBody: string): LeituraDeEnvelope<RyzeEnvelope
 export function lerWebhookRyze(rawBody: string): RyzeWebhookParse {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawBody);
+    parsed = normalizarPayloadRyze(JSON.parse(rawBody));
   } catch {
     return { ok: false, motivo: "json_invalido", campos: [] };
   }

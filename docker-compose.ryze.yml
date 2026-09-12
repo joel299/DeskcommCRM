@@ -9,7 +9,7 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
-      APP_VERSION: a336aecfd244997b981dc7307a4b85b75e5137a9
+      APP_VERSION: 279581cc094bc131b392f4c33c0014e8f0feb7f1
       ACTIVE_CHANNEL_PROVIDER: ryze
     networks:
       - public

@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+  app:
+    image: deskcomm-ryze:gru38-05429038d5ef31c3c8ed767322e3040f99859185
+    env_file:
+      - .env.ryze-shadow
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      APP_VERSION: gru38-05429038d5ef31c3c8ed767322e3040f99859185
+      ACTIVE_CHANNEL_PROVIDER: ryze
+    networks:
+      - public
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        failure_action: rollback
+        monitor: 60s
+      rollback_config:
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 768M
+      labels:
+        traefik.enable: "true"
+        traefik.docker.network: network_public
+        traefik.http.routers.gru38-ryze.rule: "Host(`deskcomm.iainfinito.com.br`)"
+        traefik.http.routers.gru38-ryze.entrypoints: websecure
+        traefik.http.routers.gru38-ryze.tls: "true"
+        traefik.http.routers.gru38-ryze.tls.certresolver: letsencryptresolver
+        traefik.http.routers.gru38-ryze.service: gru38-ryze
+        traefik.http.services.gru38-ryze.loadbalancer.server.port: "3000"
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  srh:
+    image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${UPSTASH_REDIS_REST_TOKEN}
+      SRH_CONNECTION_STRING: redis://redis:6379
+    networks:
+      - public
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  public:
+    external: true
+    name: network_public

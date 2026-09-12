@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
 import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
 import { resolveRyzeCreds } from "../ryze/credentials";
+import { listRyzeInstances } from "../ryze/control-plane";
 import type {
   ChannelAdapter,
   ChannelHealth,
@@ -76,20 +77,27 @@ export const ryzeAdapter: ChannelAdapter = {
       return { reachable: false, status: null, detail: "transporte_nao_configurado" };
     }
 
-    const baseUrl = creds.baseUrl || "https://ryzeapi.cloud";
-    const parsedUrl = new URL(baseUrl);
-    assertSafeOutboundUrl(parsedUrl.toString());
-    await assertDestinoResolvidoSeguro(parsedUrl.hostname);
-
     try {
-      const response = await fetch(`${baseUrl}/api/instance/connectionState/${encodeURIComponent(creds.instanceName)}`, {
-        headers: { token: creds.tokenInstance },
-      });
-      if (!response.ok) {
-        return { reachable: false, status: null, detail: sanitizeRyzeError(response.status, null, creds.tokenInstance) };
+      // A Ryze não expõe uma rota individual de connectionState no contrato atual.
+      // A listagem do control plane é a rota validada e retorna o estado da instância.
+      const instances = await listRyzeInstances({ baseUrl: creds.baseUrl || "https://ryzeapi.cloud" });
+      const instance = instances.find((item) => item.name === creds.instanceName);
+      if (!instance) {
+        return { reachable: true, status: "FAILED", detail: "ryze_instance_not_found" };
       }
-      const body = (await response.json().catch(() => null)) as { state?: string; status?: string } | null;
-      return { reachable: true, status: body?.state ?? body?.status ?? null, detail: null };
+      const providerStatus = String(instance.status ?? "").toLowerCase();
+      const status = providerStatus === "connected" || providerStatus === "working"
+        ? "WORKING"
+        : providerStatus === "scan_qr_code" || providerStatus === "scan qr code"
+          ? "SCAN_QR_CODE"
+          : providerStatus === "starting"
+            ? "STARTING"
+            : providerStatus === "stopped"
+              ? "STOPPED"
+              : providerStatus === "failed"
+                ? "FAILED"
+                : null;
+      return { reachable: true, status, detail: status ? null : "ryze_unknown_instance_status" };
     } catch {
       return { reachable: false, status: null, detail: "ryze_health_unreachable" };
     }

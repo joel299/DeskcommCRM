@@ -2,14 +2,14 @@ version: "3.9"
 
 services:
   app:
-    image: deskcomm-ryze:gru39-0365694fb68d37f60aaae5d1067f2e635120fede
+    image: deskcomm-ryze:gru39-fb7a304f7309ff79c4791d78326ba9f5c45c8ea8
     env_file:
       - .env.ryze-shadow
     environment:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
-      APP_VERSION: 0365694fb68d37f60aaae5d1067f2e635120fede
+      APP_VERSION: fb7a304f7309ff79c4791d78326ba9f5c45c8ea8
       ACTIVE_CHANNEL_PROVIDER: ryze
     networks:
       - public

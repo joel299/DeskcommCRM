@@ -20,7 +20,7 @@ vi.mock("@/lib/env", () => ({
   },
 }));
 
-import { resolveLanguageModel } from "@/lib/ai/gateway";
+import { omniRouteShadowConfig, resolveLanguageModel } from "@/lib/ai/gateway";
 
 const MODELO = "anthropic/claude-haiku-4-5";
 
@@ -61,6 +61,32 @@ afterEach(() => {
 });
 
 describe("destino real de cada caminho de resolveLanguageModel", () => {
+  it("OmniRoute shadow fica desligado sem opt-in explícito", () => {
+    envMock.OMNIROUTE_API_KEY = "shadow-key";
+    envMock.OMNIROUTE_BASE_URL = "https://omniroute.example/v1";
+    envMock.OMNIROUTE_MODEL = "antigravity/gemini-3.6-flash-high";
+    expect(omniRouteShadowConfig()).toBeNull();
+  });
+
+  it("OmniRoute shadow aponta para base URL e modelo explícitos", async () => {
+    envMock.OMNIROUTE_SHADOW_ENABLED = "true";
+    envMock.OMNIROUTE_API_KEY = "shadow-key";
+    envMock.OMNIROUTE_BASE_URL = "https://omniroute.example/v1";
+    envMock.OMNIROUTE_MODEL = "antigravity/gemini-3.6-flash-high";
+
+    const model = resolveLanguageModel("antigravity/gemini-3.6-flash-high");
+    expect(model).not.toBeNull();
+    expect(await destinoDe(model!)).toContain("omniroute.example");
+  });
+
+  it("OmniRoute shadow não intercepta outro modelo", () => {
+    envMock.OMNIROUTE_SHADOW_ENABLED = "true";
+    envMock.OMNIROUTE_API_KEY = "shadow-key";
+    envMock.OMNIROUTE_BASE_URL = "https://omniroute.example/v1";
+    envMock.OMNIROUTE_MODEL = "antigravity/gemini-3.6-flash-high";
+    expect(resolveLanguageModel(MODELO)).toBeNull();
+  });
+
   it("gateway da Vercel → a requisição vai para o gateway", async () => {
     envMock.AI_GATEWAY_API_KEY = "gw-key";
     // O SDK lê esta chave do process.env por conta própria quando o model é

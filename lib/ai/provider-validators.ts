@@ -142,6 +142,22 @@ export async function validateGoogleKey(apiKey: string): Promise<ValidationResul
  * provou ser válida: seria trocar um erro de credencial por um de
  * disponibilidade.
  */
+export async function validateOmniRouteKey(apiKey: string): Promise<ValidationResult> {
+  const base = (process.env.OMNIROUTE_BASE_URL ?? "https://omnirouter.iainfinito.com.br/v1").replace(/\/$/, "");
+  try {
+    const res = await timedFetch(`${base}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (res.status === 401 || res.status === 403) return { ok: false, error: "auth_failed_401" };
+    if (!res.ok) return { ok: false, error: `provider_status_${res.status}` };
+    const json = (await res.json()) as { data?: { id?: string }[] };
+    return { ok: true, models: (json.data ?? []).map((m) => m.id ?? "").filter(Boolean) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.name : "network_error" };
+  }
+}
+
 export async function validateOpenRouterKey(apiKey: string): Promise<ValidationResult> {
   try {
     const auth = await timedFetch("https://openrouter.ai/api/v1/key", {
@@ -180,6 +196,8 @@ export function validateProviderKey(
       return validateOpenAIKey(apiKey);
     case "google":
       return validateGoogleKey(apiKey);
+    case "omniroute":
+      return validateOmniRouteKey(apiKey);
     case "openrouter":
       return validateOpenRouterKey(apiKey);
     default: {

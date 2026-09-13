@@ -13,6 +13,7 @@ function adminFake(options: {
   status?: QueryResult;
   outgoing?: QueryResult;
   eventDuplicateAfterFirst?: boolean;
+  eventBusy?: boolean;
   finishError?: boolean;
   releaseError?: boolean;
   releaseFalse?: boolean;
@@ -25,6 +26,7 @@ function adminFake(options: {
     if (name === "fn_upsert_wa_conversation") return { data: "conversation-1", error: null };
     if (name === "fn_claim_ryze_webhook_event") {
       eventClaims += 1;
+      if (options.eventBusy) return { data: [{ outcome: "busy", claim_token: null }], error: null };
       return options.eventDuplicateAfterFirst && eventClaims > 1
         ? { data: [{ outcome: "already_processed", claim_token: null }], error: null }
         : { data: [{ outcome: "claimed", claim_token: `claim-${eventClaims}` }], error: null };
@@ -188,6 +190,19 @@ describe("Ryze ingestão F4", () => {
     expect(second.status).toBe("duplicate");
     expect(efeitos.aplicar).toHaveBeenCalledTimes(1);
     expect(calls.filter((call) => call.op === "insert" && call.table === "messages")).toHaveLength(1);
+  });
+
+  it("trata contenção de status como duplicata idempotente", async () => {
+    const { admin } = adminFake({ eventBusy: true });
+    const result = await ingestRyzeInbound(admin, {
+      ...base,
+      envelope: {
+        event: "message.status",
+        data: { id: "delivery-busy-1", message: { id: "message-external-1", status: "delivered" } },
+      },
+    });
+
+    expect(result).toEqual({ status: "duplicate" });
   });
 
   it("claim atômico permite somente um worker concorrente", async () => {

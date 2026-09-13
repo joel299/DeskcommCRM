@@ -21,6 +21,22 @@ import { env } from "@/lib/env";
  *  `@ai-sdk/openai` fala com ela sem dependência nova. */
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+/**
+ * OmniRoute shadow is deliberately opt-in. It must never replace the
+ * organization credential or silently affect the published Anthropic agent.
+ */
+export const OMNIROUTE_BASE_URL = "";
+
+export function omniRouteShadowConfig(): { apiKey: string; baseURL: string; model: string } | null {
+  if (env.OMNIROUTE_SHADOW_ENABLED !== "true") return null;
+  if (!env.OMNIROUTE_API_KEY || !env.OMNIROUTE_BASE_URL || !env.OMNIROUTE_MODEL) return null;
+  return {
+    apiKey: env.OMNIROUTE_API_KEY,
+    baseURL: env.OMNIROUTE_BASE_URL.replace(/\/$/, ""),
+    model: env.OMNIROUTE_MODEL,
+  };
+}
+
 export type ModelId =
   | "anthropic/claude-sonnet-5"
   | "anthropic/claude-opus-5"
@@ -37,7 +53,8 @@ export function isAiGatewayConfigured(): boolean {
   return (
     Boolean(env.AI_GATEWAY_API_KEY) ||
     Boolean(env.OPENROUTER_API_KEY) ||
-    Boolean(env.ANTHROPIC_API_KEY)
+    Boolean(env.ANTHROPIC_API_KEY) ||
+    Boolean(omniRouteShadowConfig())
   );
 }
 
@@ -70,6 +87,14 @@ export function resolveLanguageModel(model: ModelId): LanguageModel | null {
   const id = String(model);
 
   if (gatewayConfig()) return id as LanguageModel;
+
+  const omniRoute = omniRouteShadowConfig();
+  if (omniRoute && id === omniRoute.model) {
+    return createOpenAI({
+      apiKey: omniRoute.apiKey,
+      baseURL: omniRoute.baseURL,
+    })(id);
+  }
 
   if (env.OPENROUTER_API_KEY) {
     return createOpenAI({

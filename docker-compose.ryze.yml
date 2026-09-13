@@ -37,7 +37,7 @@ services:
       labels:
         traefik.enable: "true"
         traefik.docker.network: network_public
-        traefik.http.routers.gru39-ryze.rule: "Host(`deskcomm.iainfinito.com.br`)"
+        traefik.http.routers.gru39-ryze.rule: "Host(`deskcomm-ryze.iainfinito.com.br`)"
         traefik.http.routers.gru39-ryze.entrypoints: websecure
         traefik.http.routers.gru39-ryze.tls: "true"
         traefik.http.routers.gru39-ryze.tls.certresolver: letsencryptresolver

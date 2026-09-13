@@ -37,12 +37,12 @@ services:
       labels:
         traefik.enable: "true"
         traefik.docker.network: network_public
-        traefik.http.routers.gru38-ryze.rule: "Host(`deskcomm.iainfinito.com.br`)"
-        traefik.http.routers.gru38-ryze.entrypoints: websecure
-        traefik.http.routers.gru38-ryze.tls: "true"
-        traefik.http.routers.gru38-ryze.tls.certresolver: letsencryptresolver
-        traefik.http.routers.gru38-ryze.service: gru38-ryze
-        traefik.http.services.gru38-ryze.loadbalancer.server.port: "3000"
+        traefik.http.routers.gru39-ryze.rule: "Host(`deskcomm.iainfinito.com.br`)"
+        traefik.http.routers.gru39-ryze.entrypoints: websecure
+        traefik.http.routers.gru39-ryze.tls: "true"
+        traefik.http.routers.gru39-ryze.tls.certresolver: letsencryptresolver
+        traefik.http.routers.gru39-ryze.service: gru39-ryze
+        traefik.http.services.gru39-ryze.loadbalancer.server.port: "3000"
 
   redis:
     image: redis:7-alpine

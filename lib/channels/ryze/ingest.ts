@@ -32,7 +32,13 @@ export async function ingestRyzeInbound(
     : ryzeEventId(input.envelope) ?? ryzeMessageExternalId(input.envelope);
   if (eventKey) {
     const claim = await claimRyzeEvent(admin, input, eventKey);
-    if (claim.outcome === "busy") throw new Error("ryze_event_busy");
+    if (claim.outcome === "busy") {
+      // Status de entrega/leitura pode chegar em rajada para o mesmo messageId.
+      // A contenção idempotente não deve virar 500/ingest_failed. Eventos
+      // exchange continuam fail-closed para preservar a reentrega do inbound.
+      if (input.envelope.event === "message.status") return { status: "duplicate" };
+      throw new Error("ryze_event_busy");
+    }
     if (claim.outcome === "already_processed") return { status: "duplicate" };
     try {
       const result = await processRyzeEvent(admin, input);

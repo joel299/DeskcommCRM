@@ -42,6 +42,7 @@ const GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com';
  * `familia/modelo`, o mesmo dos nossos, sem tradução no meio.
  */
 export const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1';
+export const OMNIROUTE_ENDPOINT = 'https://omnirouter.iainfinito.com.br/v1';
 
 /**
  * Cabeçalhos OPCIONAIS de atribuição da OpenRouter.
@@ -80,7 +81,7 @@ export function cabecalhosDeAtribuicaoOpenRouter(): Record<string, string> | und
  * (createFakeRegistry, sem fetch real); este caminho só é exercitado pelo smoke
  * (rede real → endpoint canônico do provider allowlistado).
  */
-export function createDefaultRegistry(opts?: { allowedHosts?: string[] }): ProviderRegistry {
+export function createDefaultRegistry(opts?: { allowedHosts?: string[]; omnirouteBaseUrl?: string }): ProviderRegistry {
   const extra = opts?.allowedHosts ?? [];
   const contain = (endpoint: string): typeof fetch => {
     const allow = buildAllowlist([endpoint, ...extra]);
@@ -103,6 +104,14 @@ export function createDefaultRegistry(opts?: { allowedHosts?: string[] }): Provi
      * endpoint canônico faria o egress bloquear a própria configuração que a
      * tela ofereceu, com erro de rede que ninguém liga ao painel.
      */
+    omniroute: (apiKey, modelId, baseUrl) => {
+      const endpoint = baseUrl ?? opts?.omnirouteBaseUrl ?? OMNIROUTE_ENDPOINT;
+      return createOpenAI({
+        apiKey,
+        baseURL: endpoint,
+        fetch: contain(endpoint),
+      })(modelId);
+    },
     openrouter: (apiKey, modelId, baseUrl) => {
       const endpoint = baseUrl ?? OPENROUTER_ENDPOINT;
       return createOpenAI({

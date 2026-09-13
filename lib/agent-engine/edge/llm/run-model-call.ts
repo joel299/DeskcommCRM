@@ -309,7 +309,7 @@ async function aplicarOrcamento(d: {
 }
 
 export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunModelCallInput, deps: RunModelCallDeps = {}) {
-  const registry = deps.registry ?? createDefaultRegistry();
+  const registry = deps.registry ?? createDefaultRegistry({ omnirouteBaseUrl: cfg.omnirouteBaseUrl });
   const purpose = input.purpose ?? 'agent_turn';
 
   // A config da org é lida ANTES da decisão porque o resolvedor precisa dela

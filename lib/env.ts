@@ -137,7 +137,7 @@ const schema = z.object({
   SUPABASE_DB_ADMIN_URL: z.string().optional().default(""),
 
   // WAHA
-  ACTIVE_CHANNEL_PROVIDER: z.enum(["waha", "ryze"]).default("waha"),
+  ACTIVE_CHANNEL_PROVIDER: z.enum(["waha", "ryze"]).default("ryze"),
   WAHA_API_BASE_URL: required("WAHA_API_BASE_URL"),
   WAHA_API_KEY: required("WAHA_API_KEY"),
   WAHA_WEBHOOK_BASE_URL: required("WAHA_WEBHOOK_BASE_URL"),

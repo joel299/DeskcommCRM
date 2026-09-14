@@ -91,7 +91,7 @@ export const CHANNEL_CAPABILITIES: Record<ChannelProvider, ChannelCapabilities> 
  * CONSERVADOR dos dois — banRisk armado, throttle e warm-up ligados; errar para
  * o lado do meta_cloud desarmaria o anti-ban num número que pode ser banido.
  */
-export const DEFAULT_CHANNEL_PROVIDER: ChannelProvider = "waha";
+export const DEFAULT_CHANNEL_PROVIDER: ChannelProvider = "ryze";
 
 /**
  * Constantes nomeadas dos providers. Existem para que nenhum arquivo fora deste

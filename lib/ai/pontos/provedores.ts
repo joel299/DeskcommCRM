@@ -83,6 +83,16 @@ export const PROVEDORES = [
     ondePegarAChave: "https://openrouter.ai/keys",
     prefixoDaChave: "sk-or-…",
   },
+  {
+    id: "omniroute",
+    rotulo: "OmniRoute (gateway interno)",
+    quandoUsar:
+      "Gateway LLM gerenciado pela instalação; usa a credencial server-side e o modelo publicado pelo contrato do ambiente.",
+    aceitaEndpointProprio: false,
+    catalogoSincronizavel: false,
+    ondePegarAChave: "",
+    prefixoDaChave: "server-side",
+  },
 ] as const satisfies readonly ProvedorSuportado[];
 // `as const satisfies` e não anotação de tipo: a anotação apagaria os literais
 // e `Provider` viraria `string`, deixando o compilador aceitar qualquer texto

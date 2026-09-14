@@ -64,6 +64,7 @@ import { MIRROR_WARN_ONLY, mirrorLeadStageToCrm } from '../edge/crm/move-lead-st
 import { insertInboxItem } from '../db/repository';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { moverLeadParaEtapaDeHandoff } from '@/lib/leads/handoff-stage-move';
+import { finishAgentRun, startAgentRun } from './agent-run-tracker';
 import { detectUrgencySignal } from '../guardrails/sinal-de-urgencia';
 import { buildNativeMediaParts } from './media-parts';
 import { enqueueJob, rescheduleJob, type JobRow, type Queryable } from '../queue/queue';
@@ -4053,22 +4054,23 @@ export function createInboundTurnHandler(deps: InboundTurnDeps) {
       return;
     }
     if (operationAgent?.pausedAt) return;
-    await runAgentTurn(deps, job, pool, ctx, {
-      resolvedAgent,
-      channelSessionId: payload.channel_session_id,
-      conversationId: payload.conversation_id,
-      inboundMessageId: payload.inbound_message_id,
-      buildOpening: ({
-        previous,
-        leadState,
-        context,
-        notesIndexBlock,
-        projeta,
-        entregues,
-        compromissosBlock,
-        currentInboundText,
-      }) =>
-        buildOpeningMessage(
+    if (operationAgent) {
+      await startAgentRun(pool, job, {
+        organizationId: job.organization_id,
+        conversationId: payload.conversation_id,
+        contactId: job.contact_id,
+        channelSessionId: payload.channel_session_id,
+        inboundMessageId: payload.inbound_message_id,
+        agent: operationAgent,
+      });
+    }
+    try {
+      await runAgentTurn(deps, job, pool, ctx, {
+        resolvedAgent,
+        channelSessionId: payload.channel_session_id,
+        conversationId: payload.conversation_id,
+        inboundMessageId: payload.inbound_message_id,
+        buildOpening: ({
           previous,
           leadState,
           context,
@@ -4077,7 +4079,22 @@ export function createInboundTurnHandler(deps: InboundTurnDeps) {
           entregues,
           compromissosBlock,
           currentInboundText,
-        ),
-    });
+        }) =>
+          buildOpeningMessage(
+            previous,
+            leadState,
+            context,
+            notesIndexBlock,
+            projeta,
+            entregues,
+            compromissosBlock,
+            currentInboundText,
+          ),
+      });
+    } catch (error) {
+      if (operationAgent) await finishAgentRun(pool, job, { ok: false, error });
+      throw error;
+    }
+    if (operationAgent) await finishAgentRun(pool, job, { ok: true });
   };
 }

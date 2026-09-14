@@ -40,6 +40,9 @@ const envSchema = z.object({
   // Consertar a irmã da OpenAI e deixar esta é o modo de falha desta família:
   // ao mexer aqui, confira as três de uma vez.
   OPENROUTER_API_KEY: z.string().min(1).optional(),
+  // OmniRoute é o único gateway LLM permitido no contrato GRU-44; a chave é
+  // server-side e não pode ser substituída por token Ryze.
+  OMNIROUTE_API_KEY: z.string().min(1).optional(),
   // Modelo default do agente quando a org não define o dela (knob, nunca constante).
   AGENT_DEFAULT_MODEL: z.string().min(1).default('claude-sonnet-4-5'),
   // Teto de conexões por pool do pg. Sem valor = pg decide (default 10).

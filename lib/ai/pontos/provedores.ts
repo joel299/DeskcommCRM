@@ -90,7 +90,7 @@ export const PROVEDORES = [
       "Gateway LLM gerenciado pela instalação; usa a credencial server-side e o modelo publicado pelo contrato do ambiente.",
     aceitaEndpointProprio: false,
     catalogoSincronizavel: false,
-    ondePegarAChave: "",
+    ondePegarAChave: "https://omnirouter.iainfinito.com.br",
     prefixoDaChave: "server-side",
   },
 ] as const satisfies readonly ProvedorSuportado[];

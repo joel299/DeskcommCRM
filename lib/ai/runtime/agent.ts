@@ -32,7 +32,6 @@ import { generateText, stepCountIs, type LanguageModel, type StopCondition, type
 import {
   cabecalhosDeAtribuicaoOpenRouter,
   OMNIROUTE_ENDPOINT,
-  OMNIROUTE_MODEL,
   OPENROUTER_ENDPOINT,
 } from "@/lib/agent-engine/edge/llm/providers";
 import { CredentialUnavailableError, loadCredential } from "@/lib/ai/credentials";
@@ -190,8 +189,7 @@ export function buildModel(provider: string, apiKey: string, modelId: string): L
         headers: cabecalhosDeAtribuicaoOpenRouter(),
       })(modelId);
     case "omniroute":
-      if (modelId !== OMNIROUTE_MODEL) throw new Error("omniroute_model_not_allowed");
-      return createOpenAI({ apiKey, baseURL: OMNIROUTE_ENDPOINT })(OMNIROUTE_MODEL);
+      return createOpenAI({ apiKey, baseURL: OMNIROUTE_ENDPOINT })(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }

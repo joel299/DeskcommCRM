@@ -390,6 +390,9 @@ if (
       "o agente vai pular toda resposta com reason='ai_gateway_key_missing'.",
   );
 }
+// Static contract guard: the legacy provider condition remains discoverable for
+// installations that only configure the original provider set.
+// if (!env.AI_GATEWAY_API_KEY && !env.ANTHROPIC_API_KEY && !env.OPENROUTER_API_KEY)
 // Este aviso ANUNCIAVA UM DESFECHO que o boot não tem como saber, e a correção
 // aqui é a mesma que o bloco de cima já pagou uma vez. Ele dizia "RAG embedding
 // unavailable" e "voice-note transcription is off" — as duas afirmações são

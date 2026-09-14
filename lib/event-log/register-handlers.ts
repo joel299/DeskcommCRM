@@ -10,7 +10,7 @@ import { aiResponseHandler } from "@/workers/ai-response-worker.handler";
 import { aiSentimentHandler } from "@/workers/ai-sentiment-worker.handler";
 import { aiHandoffFromSentimentHandler } from "@/workers/ai-handoff-from-sentiment.handler";
 import { ragIndexerHandler } from "@/workers/rag-indexer.handler";
-import { lgpdExportHandler } from "@/workers/lgpd-export-worker.handler";
+import type { EventHandler } from "@/lib/event-log/dispatcher";
 import { lgpdRedactHandler } from "@/workers/lgpd-redact-worker.handler";
 import { automationRulesHandler } from "@/lib/automation/engine.handler";
 import { followupReactivityHandler } from "@/lib/followup/reactivity.handler";
@@ -21,6 +21,19 @@ import { mediaDeriveHandler } from "@/workers/media-derive-worker.handler";
 import { webPushInboundHandler } from "@/lib/notifications/push.handler";
 import { conversaoDeVendaHandler } from "@/lib/conversoes/envio.handler";
 import { registerHandler } from "@/lib/event-log/dispatcher";
+
+// Lazy-load the PDF worker: importing @react-pdf/renderer during agent-worker
+// boot makes the whole event drain fail on installations whose hyphenate
+// package does not expose ./en-us. The LGPD event still uses the same handler;
+// only the optional dependency is deferred until that event actually arrives.
+const lgpdExportHandler: EventHandler = {
+  key: "lgpd-export-worker.v1",
+  events: ["lgpd.data_request_received"],
+  async handle(row) {
+    const { processLgpdExport } = await import("@/workers/lgpd-export-worker");
+    return processLgpdExport(row);
+  },
+};
 
 let _registered = false;
 

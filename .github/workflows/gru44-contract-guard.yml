@@ -1,0 +1,40 @@
+name: GRU-44 contract guard
+
+on:
+  push:
+    branches:
+      - gru44/coordination
+      - gru44/stark-whatsapp
+      - gru44/neliel-ia
+    paths:
+      - docs/agents/**
+      - .github/workflows/gru44-contract-guard.yml
+  pull_request:
+    paths:
+      - docs/agents/**
+      - .github/workflows/gru44-contract-guard.yml
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Required contract files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in             docs/agents/CONTRATO-GRU44.md             docs/agents/AUDITORIA.md             docs/agents/STARK-WHATSAPP.md             docs/agents/NELIEL-IA.md             docs/agents/README.md; do
+            test -s "$file" || { echo "missing or empty: $file"; exit 1; }
+          done
+
+      - name: Required canonical terms
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "Ryze" docs/agents/CONTRATO-GRU44.md
+          grep -q "OmniRoute" docs/agents/CONTRATO-GRU44.md
+          grep -q "antigravity/gemini-3.6-flash-high" docs/agents/CONTRATO-GRU44.md
+          grep -q "GRU-44" docs/agents/CONTRATO-GRU44.md
+          grep -q "In Progress" docs/agents/CONTRATO-GRU44.md

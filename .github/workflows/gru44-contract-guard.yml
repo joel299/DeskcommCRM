@@ -14,6 +14,8 @@ on:
       - docs/agents/**
       - .github/workflows/gru44-contract-guard.yml
 
+permissions: {}
+
 jobs:
   contract:
     runs-on: ubuntu-latest

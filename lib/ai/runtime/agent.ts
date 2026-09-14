@@ -31,6 +31,7 @@ import { generateText, stepCountIs, type LanguageModel, type StopCondition, type
 // Repetir a URL aqui criaria dois lugares para consertar quando ela mudar.
 import {
   cabecalhosDeAtribuicaoOpenRouter,
+  OMNIROUTE_ENDPOINT,
   OPENROUTER_ENDPOINT,
 } from "@/lib/agent-engine/edge/llm/providers";
 import { CredentialUnavailableError, loadCredential } from "@/lib/ai/credentials";
@@ -155,7 +156,12 @@ function buildSentinelRegex(keywords: string[]): RegExp | null {
  * lá não existe faria o ensaio passar e a mensagem real falhar.
  */
 export function chaveDePlataforma(provider: string): string | null {
-  const nome = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY" }[
+  const nome = {
+    anthropic: "ANTHROPIC_API_KEY",
+    openai: "OPENAI_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    omniroute: "OMNIROUTE_API_KEY",
+  }[
     provider
   ];
   if (!nome) return null;
@@ -182,6 +188,8 @@ export function buildModel(provider: string, apiKey: string, modelId: string): L
         baseURL: OPENROUTER_ENDPOINT,
         headers: cabecalhosDeAtribuicaoOpenRouter(),
       })(modelId);
+    case "omniroute":
+      return createOpenAI({ apiKey, baseURL: OMNIROUTE_ENDPOINT })(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }
@@ -693,12 +701,17 @@ async function failRun(
   startedAt: number,
 ): Promise<RunAgentResult> {
   const latencyMs = Date.now() - startedAt;
+  const sanitized = message
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/(api[_-]?key|token|password|secret)=?\s*[:=]?\s*\S+/gi, "$1=[redacted]")
+    .replace(/[A-Z0-9_\-]{24,}/g, "[redacted]")
+    .slice(0, 500);
   await finalizeRun({
     runId: run.id,
     organizationId: run.organization_id,
     status: "failed",
     errorCode: code,
-    errorMessage: message,
+    errorMessage: sanitized,
     latencyMs,
     isDryRun: run.is_dry_run,
   });
@@ -706,7 +719,7 @@ async function failRun(
     run_id: run.id,
     status: "failed",
     error_code: code,
-    error_message: message,
+    error_message: sanitized,
     latency_ms: latencyMs,
   };
 }

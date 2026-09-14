@@ -137,6 +137,11 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
       "Este é o check obrigatório `invariants` (`pnpm test:db`) — o único que exercita o " +
       "`baseline.sql` que o self-hoster aplica, e o isolamento RLS entre organizações.",
   },
+  "gru44-contract-guard.yml::contract": {
+    condicao: null,
+    efeito: "Este job verifica que os contratos de GRU-44 continuam presentes e com os termos canônicos.",
+  },
+
   "e2e.yml::e2e-parte": {
     condicao: null,
     efeito: "São as partes da matriz Playwright; sem elas o `e2e` fica sem nada para ler.",

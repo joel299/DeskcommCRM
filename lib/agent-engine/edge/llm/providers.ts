@@ -42,6 +42,8 @@ const GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com';
  * `familia/modelo`, o mesmo dos nossos, sem tradução no meio.
  */
 export const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1';
+export const OMNIROUTE_ENDPOINT = 'https://omnirouter.iainfinito.com.br/v1';
+export const OMNIROUTE_MODEL = 'antigravity/gemini-3.6-flash-high';
 
 /**
  * Cabeçalhos OPCIONAIS de atribuição da OpenRouter.
@@ -111,6 +113,16 @@ export function createDefaultRegistry(opts?: { allowedHosts?: string[] }): Provi
         headers: cabecalhosDeAtribuicaoOpenRouter(),
         fetch: contain(endpoint),
       })(modelId);
+    },
+    omniroute: (apiKey, modelId) => {
+      if (modelId !== OMNIROUTE_MODEL) {
+        throw new Error(`omniroute_model_not_allowed: expected ${OMNIROUTE_MODEL}`);
+      }
+      return createOpenAI({
+        apiKey,
+        baseURL: OMNIROUTE_ENDPOINT,
+        fetch: contain(OMNIROUTE_ENDPOINT),
+      })(OMNIROUTE_MODEL);
     },
   };
 }

@@ -14,9 +14,13 @@ type RunContext = {
 
 const safeError = (error: unknown): { code: string; message: string } => {
   const message = error instanceof Error ? error.message : String(error);
+  const sanitized = message
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/(api[_-]?key|token|password|secret)=?\s*[:=]?\s*\S+/gi, '$1=[redacted]')
+    .replace(/[A-Z0-9_\-]{24,}/g, '[redacted]');
   return {
-    code: message.slice(0, 80).replace(/[^a-zA-Z0-9_.-]+/g, '_') || 'agent_turn_failed',
-    message: message.slice(0, 500).replace(/[\r\n]+/g, ' '),
+    code: sanitized.slice(0, 80).replace(/[^a-zA-Z0-9_.-]+/g, '_') || 'agent_turn_failed',
+    message: sanitized.slice(0, 500).replace(/[\r\n]+/g, ' '),
   };
 };
 
@@ -52,10 +56,16 @@ export async function finishAgentRun(
        from llm_calls where job_id = $1 order by created_at asc, id asc`,
     [job.id],
   );
-  const trace = calls.rows.map((call) => ({
-    call_id: call.id, provider: call.provider, model: call.model, purpose: call.purpose,
-    input_tokens: Number(call.input_tokens ?? 0), output_tokens: Number(call.output_tokens ?? 0),
-    latency_ms: call.latency_ms === null ? null : Number(call.latency_ms),
+  const trace = calls.rows.map((call, index) => ({
+    step: index + 1,
+    finish_reason: 'stop',
+    tokens_in: Number(call.input_tokens ?? 0),
+    tokens_out: Number(call.output_tokens ?? 0),
+    tool_calls: [{
+      tool_name: 'llm_call',
+      args: { provider: call.provider, model: call.model, purpose: call.purpose },
+      result: { call_id: call.id },
+    }],
   }));
   const inputTokens = calls.rows.reduce((sum, call) => sum + Number(call.input_tokens ?? 0), 0);
   const outputTokens = calls.rows.reduce((sum, call) => sum + Number(call.output_tokens ?? 0), 0);
@@ -70,10 +80,15 @@ export async function finishAgentRun(
   );
   const invalidSuccess =
     outcome.ok &&
-    (calls.rows.length === 0 || inputTokens <= 0 || outputTokens <= 0 || trace.length === 0);
+      (calls.rows.length === 0 || inputTokens <= 0 || outputTokens <= 0 || trace.length === 0 || outbound.rows.length === 0);
   const error = outcome.ok
     ? invalidSuccess
-      ? { code: 'empty_model_trace', message: 'agent run completed without a positive model trace' }
+      ? {
+          code: outbound.rows.length === 0 ? 'missing_outbound' : 'empty_model_trace',
+          message: outbound.rows.length === 0
+            ? 'agent run completed without an AI outbound message'
+            : 'agent run completed without a positive model trace',
+        }
       : null
     : safeError(outcome.error);
   await pool.query(

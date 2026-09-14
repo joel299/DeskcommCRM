@@ -164,6 +164,8 @@ const schema = z.object({
   // por lá. Ver resolveLanguageModel() em lib/ai/gateway.ts.
   OPENROUTER_API_KEY: z.string().optional().default(""),
   OPENROUTER_BASE_URL: z.string().optional().default(""),
+  // OmniRoute é o gateway LLM server-side do contrato GRU-44.
+  OMNIROUTE_API_KEY: z.string().optional().default(""),
   // Atribuição OPCIONAL da OpenRouter (`HTTP-Referer` / `X-Title`): identifica a
   // instalação no painel e no ranking público DELES. A doc da OpenRouter chama
   // os dois de opcionais e a chamada funciona sem — por isso default vazio e
@@ -377,7 +379,12 @@ export const env = parsed.data;
 // cadastrava uma chave da Anthropic que não precisava, só para calar o aviso.
 // O texto era verdadeiro enquanto a Anthropic era a única chave que o
 // instalador pedia; o menu novo o tornou falso.
-if (!env.AI_GATEWAY_API_KEY && !env.ANTHROPIC_API_KEY && !env.OPENROUTER_API_KEY) {
+if (
+  !env.AI_GATEWAY_API_KEY &&
+  !env.ANTHROPIC_API_KEY &&
+  !env.OPENROUTER_API_KEY &&
+  !env.OMNIROUTE_API_KEY
+) {
   console.warn(
     "[env] Nenhuma chave de IA configurada (AI_GATEWAY_API_KEY, ANTHROPIC_API_KEY ou OPENROUTER_API_KEY) — " +
       "o agente vai pular toda resposta com reason='ai_gateway_key_missing'.",

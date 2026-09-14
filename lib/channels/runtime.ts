@@ -1,7 +1,7 @@
 import type pg from "pg";
 import type { ChannelAdapter } from "../agent-engine/channel-adapter";
 import type { CrmEdgeConfig } from "../agent-engine/edge/crm/mcp-client";
-import { WahaChannelAdapter } from "../agent-engine/edge/channel/waha-adapter";
+import { CrmChannelAdapter } from "./adapters/crm";
 
 export type RuntimeSendChannel = Pick<ChannelAdapter, "send">;
 
@@ -13,6 +13,6 @@ export function createRuntimeSendChannel(
   pool: pg.Pool,
   config: CrmEdgeConfig,
 ): RuntimeSendChannel {
-  const adapter = new WahaChannelAdapter(pool, config);
+  const adapter = new CrmChannelAdapter(pool, config);
   return { send: (input) => adapter.send(input) };
 }

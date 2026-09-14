@@ -46,7 +46,7 @@ import {
 } from '../edge/crm/get-lead-context';
 import { citationsFromHits, searchKnowledge } from './search-knowledge';
 import type { CrmEdgeConfig } from '../edge/crm/mcp-client';
-import { WahaChannelAdapter } from '../edge/channel/waha-adapter';
+import { CrmChannelAdapter } from '@/lib/channels/adapters/crm';
 // applySendOutcome é disposição de FILA (cancel/reschedule + cache de opt-out), não
 // egress de canal — o envio em si vai pelo adapter (ChannelAdapter). Ver F2-25.
 import { applySendOutcome } from '../edge/crm/send-message';
@@ -1469,7 +1469,7 @@ export async function runAgentTurn(
           },
           {
             motivo: 'orcamento_de_ia',
-            channel: (deps.channel ?? ((p: pg.Pool) => new WahaChannelAdapter(p, deps.crmCfg)))(
+            channel: (deps.channel ?? ((p: pg.Pool) => new CrmChannelAdapter(p, deps.crmCfg)))(
               pool,
             ),
             now: deps.clock?.() ?? new Date(),
@@ -1918,7 +1918,7 @@ async function executarTurnoDoAgente(
     agentConfig !== null ? { ...deps.crmCfg, agentActorId: agentConfig.agentId } : deps.crmCfg;
   const channel = preview
     ? null
-    : (deps.channel ?? ((p: pg.Pool) => new WahaChannelAdapter(p, turnCrmCfg)))(pool);
+    : (deps.channel ?? ((p: pg.Pool) => new CrmChannelAdapter(p, turnCrmCfg)))(pool);
   const liveChannel = (): ChannelAdapter => {
     if (!channel) throw new Error('preview_transport_forbidden');
     return channel;

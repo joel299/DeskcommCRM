@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptWebhookSecret } from "@/lib/webhooks/secrets";
 import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
@@ -22,7 +23,15 @@ export interface RyzeListResponse {
  * NUNCA imprime ou retorna o valor em logs/exceções.
  */
 export function getRyzeAccountToken(): string {
-  const token = process.env.RYZE_ACCOUNT_TOKEN;
+  const token = process.env.RYZE_ACCOUNT_TOKEN || (() => {
+    const tokenFile = process.env.RYZE_ACCOUNT_TOKEN_FILE;
+    if (!tokenFile) return undefined;
+    try {
+      return readFileSync(tokenFile, "utf8").trim();
+    } catch {
+      return undefined;
+    }
+  })();
   if (!token) {
     throw new Error("ryze_account_token_missing: RYZE_ACCOUNT_TOKEN ausente no runtime");
   }

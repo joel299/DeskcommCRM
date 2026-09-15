@@ -440,10 +440,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
       // ignoram o terceiro argumento e vão ao endpoint intrínseco.
       model: factory(config.apiKey, model, decisao.baseUrl ?? undefined),
       system: prefix.system,
-      messages:
-        config.provider === 'omniroute'
-          ? normalizarMensagensOpenAiCompat(input.messages)
-          : input.messages,
+      messages: normalizarMensagensOpenAiCompat(input.messages),
       tools: guardServiceTools(prefix.tools),
       stopWhen: input.maxSteps === undefined ? undefined : stepCountIs(input.maxSteps),
       temperature,

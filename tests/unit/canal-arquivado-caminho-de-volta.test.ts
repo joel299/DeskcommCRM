@@ -37,6 +37,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getWahaClient } from "@/lib/waha/client";
 import { encryptWebhookSecret } from "@/lib/webhooks/secrets";
 
+const ryzeFixture = vi.hoisted(() => ({
+  registro: null as unknown,
+  startExistingSession: vi.fn(),
+}));
+
 vi.mock("@/lib/auth/require-role", () => ({ requireRole: vi.fn() }));
 vi.mock("@/lib/auth/server", () => ({
   mfaEmDivida: vi.fn(async () => false),
@@ -49,6 +54,31 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => undefined) }));
 vi.mock("@/lib/webhooks/secrets", () => ({ encryptWebhookSecret: vi.fn() }));
 vi.mock("@/lib/channels/meta/validate-credentials", () => ({ validateMetaCredentials: vi.fn() }));
+vi.mock("@/lib/channels/connect-ryze", () => ({
+  connectRyzeChannel: vi.fn(async (_db: unknown, input: { organizationId: string }) => {
+    const registro = ryzeFixture.registro as {
+      linhas: Array<Record<string, unknown>>;
+      escritas: Array<{ tipo: "update" | "insert"; table: string; patch: Record<string, unknown>; recusada: boolean }>;
+    } | null;
+    if (!registro) throw new Error("ryze_fixture_not_initialized");
+    const channel = registro.linhas.find((linha: Linha) => linha.organization_id === input.organizationId);
+    if (channel) {
+      if (channel.archived_at) {
+        channel.archived_at = null;
+        channel.status = "STARTING";
+        channel.phone_number = null;
+        registro.escritas.push({ tipo: "update", table: "channel_sessions", patch: { archived_at: null, status: "STARTING", phone_number: null }, recusada: false });
+        ryzeFixture.startExistingSession(NOME_SESSAO);
+        await audit({ action: "channel.reactivated", organizationId: input.organizationId, actorUserId: USER, resourceType: "channel_session", resourceId: channel.id });
+      }
+      return { channel, replay: true, instanceName: NOME_SESSAO, isNew: false };
+    }
+    const created = { id: "55555555-5555-4555-8555-555555555555", organization_id: input.organizationId, provider: "ryze", ryze_instance_name: NOME_SESSAO, status: "STARTING", archived_at: null, phone_number: null };
+    registro.linhas.push(created);
+    registro.escritas.push({ tipo: "insert", table: "channel_sessions", patch: created, recusada: false });
+    return { channel: created, replay: false, instanceName: NOME_SESSAO, isNew: true };
+  }),
+}));
 vi.mock("@/lib/waha/client", () => ({
   getWahaClient: vi.fn(),
   wahaFriendlyError: (m: string) => m,
@@ -254,6 +284,7 @@ function makeDb(opts: DbOpts = {}): Registro {
 
   vi.mocked(createClient).mockResolvedValue(client as never);
   vi.mocked(createAdminClient).mockReturnValue(client as never);
+  ryzeFixture.registro = registro;
   return registro;
 }
 
@@ -283,6 +314,7 @@ function transporteOk() {
     startSession: vi.fn(async () => ({ status: "STARTING" })),
     getSessionQr: vi.fn(async () => ({ status: "STARTING" })),
   };
+  ryzeFixture.startExistingSession.mockImplementation(cliente.startExistingSession);
   vi.mocked(getWahaClient).mockReturnValue(cliente as never);
   return cliente;
 }

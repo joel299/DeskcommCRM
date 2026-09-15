@@ -137,6 +137,16 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
       "Este é o check obrigatório `invariants` (`pnpm test:db`) — o único que exercita o " +
       "`baseline.sql` que o self-hoster aplica, e o isolamento RLS entre organizações.",
   },
+  "build-image.yml::build": {
+    condicao: null,
+    efeito:
+      "Este job constrói e publica a imagem Ryze no GHCR; sem ele a imagem imutável não é disponibilizada para implantação.",
+  },
+  "gru44-contract-guard.yml::contract": {
+    condicao: null,
+    efeito:
+      "Este job valida os contratos documentais de GRU-44; sem ele alterações de provider/canal podem entrar sem a guarda de governança.",
+  },
   "e2e.yml::e2e-parte": {
     condicao: null,
     efeito: "São as partes da matriz Playwright; sem elas o `e2e` fica sem nada para ler.",

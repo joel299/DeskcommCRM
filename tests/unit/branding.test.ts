@@ -251,6 +251,12 @@ const MARCA_CONGELADA: Record<string, EntradaDeMarca> = {
       "sufixo do `iCalUID` e prefixo das `extendedProperties` que GRAVAMOS dentro do Google Calendar do cliente. É por essa string que reconhecemos, meses depois, quais eventos daquela agenda vieram do CRM — e é o que impede o laço de eco. Trocar pela marca do revendedor faz todo evento já criado deixar de ser reconhecido, e o sintoma é compromisso fantasma ocupando horário, sem erro nenhum",
     marcas: ["deskcomm", "deskcomm.app"],
   },
+  "lib/channels/connect-ryze.ts": {
+    categoria: "INFRA",
+    motivo:
+      "prefixo técnico do nome determinístico da instância Ryze existente; é identificador operacional da integração e não texto de interface",
+    marcas: ["deskcomm"],
+  },
 
   // ─── INFRA — cookie/storage/contêiner. Renomear desloga ou perde estado. ───
   "app/layout.tsx": {

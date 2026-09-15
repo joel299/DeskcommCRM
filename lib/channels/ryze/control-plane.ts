@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptWebhookSecret } from "@/lib/webhooks/secrets";
 import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
 import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
+import { resolveRyzeCreds } from "./credentials";
 
 export interface RyzeInstanceDescriptor {
   id?: string;
@@ -22,7 +24,10 @@ export interface RyzeListResponse {
  * NUNCA imprime ou retorna o valor em logs/exceções.
  */
 export function getRyzeAccountToken(): string {
-  const token = process.env.RYZE_ACCOUNT_TOKEN;
+  const tokenFile = process.env.RYZE_ACCOUNT_TOKEN_FILE;
+  const token = tokenFile && existsSync(tokenFile)
+    ? readFileSync(tokenFile, "utf8").trim()
+    : process.env.RYZE_ACCOUNT_TOKEN;
   if (!token) {
     throw new Error("ryze_account_token_missing: RYZE_ACCOUNT_TOKEN ausente no runtime");
   }
@@ -65,6 +70,39 @@ export async function listRyzeInstances(options?: {
   }
 
   return json.instances;
+}
+
+async function ryzeInstanceRequest(
+  method: "POST" | "DELETE",
+  instanceName: string,
+  action: "reconnect" | "delete",
+): Promise<Record<string, unknown>> {
+  const accountToken = getRyzeAccountToken();
+  const baseUrl = process.env.RYZE_API_BASE_URL || "https://ryzeapi.cloud";
+  const parsed = new URL(baseUrl);
+  assertSafeOutboundUrl(parsed.toString());
+  await assertDestinoResolvidoSeguro(parsed.hostname);
+  const url = `${baseUrl.replace(/\/$/, "")}/api/instance/${action}/${encodeURIComponent(instanceName)}`;
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json", token: accountToken },
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = await response.text();
+  let json: Record<string, unknown> = {};
+  try { json = JSON.parse(text) as Record<string, unknown>; } catch { /* handled below */ }
+  if (!response.ok) throw new Error(`ryze_instance_${action}_failed: HTTP ${response.status}`);
+  if (json.success === false) throw new Error(`ryze_instance_${action}_rejected`);
+  return json;
+}
+
+export function reconnectRyzeInstance(instanceName: string): Promise<Record<string, unknown>> {
+  return ryzeInstanceRequest("POST", instanceName, "reconnect");
+}
+
+export function deleteRyzeInstance(instanceName: string): Promise<Record<string, unknown>> {
+  return ryzeInstanceRequest("DELETE", instanceName, "delete");
 }
 
 export async function lookupRyzeSession(
@@ -185,10 +223,15 @@ export async function provisionRyzeInstance(params: {
         .maybeSingle();
 
       if (dbCred?.ryze_token_encrypted) {
-        return { instanceName, isNew: false };
+        const persisted = await resolveRyzeCreds(db, { organizationId, instanceName });
+        if (persisted?.tokenInstance) {
+          tokenInstance = persisted.tokenInstance;
+        }
       }
 
-      throw new Error("ryze_existing_instance_token_unavailable: a instancia ja existe no plano de controle mas o token nao esta disponivel para re-vinculo");
+      if (!tokenInstance) {
+        throw new Error("ryze_existing_instance_token_unavailable: a instancia ja existe no plano de controle mas o token nao esta disponivel para re-vinculo");
+      }
     }
   } else {
     // Pré-cifrar antes do efeito externo: falha de webhook não pode consumir a única instância.

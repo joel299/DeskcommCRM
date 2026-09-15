@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptWebhookSecret, encryptWebhookSecret } from "@/lib/webhooks/secrets";
 import { assertDestinoResolvidoSeguro } from "@/lib/automation/outbound-ip";
 import { assertSafeOutboundUrl } from "@/lib/automation/outbound-url";
+import { resolveRyzeCreds } from "./credentials";
 
 export interface RyzeInstanceDescriptor {
   id?: string;
@@ -23,15 +24,10 @@ export interface RyzeListResponse {
  * NUNCA imprime ou retorna o valor em logs/exceções.
  */
 export function getRyzeAccountToken(): string {
-  const token = process.env.RYZE_ACCOUNT_TOKEN || (() => {
-    const tokenFile = process.env.RYZE_ACCOUNT_TOKEN_FILE;
-    if (!tokenFile) return undefined;
-    try {
-      return readFileSync(tokenFile, "utf8").trim();
-    } catch {
-      return undefined;
-    }
-  })();
+  const tokenFile = process.env.RYZE_ACCOUNT_TOKEN_FILE;
+  const token = tokenFile && existsSync(tokenFile)
+    ? readFileSync(tokenFile, "utf8").trim()
+    : process.env.RYZE_ACCOUNT_TOKEN;
   if (!token) {
     throw new Error("ryze_account_token_missing: RYZE_ACCOUNT_TOKEN ausente no runtime");
   }
@@ -74,6 +70,148 @@ export async function listRyzeInstances(options?: {
   }
 
   return json.instances;
+}
+
+async function ryzeInstanceRequest(
+  method: "POST" | "DELETE",
+  instanceName: string,
+  action: "reconnect" | "delete",
+): Promise<Record<string, unknown>> {
+  const accountToken = getRyzeAccountToken();
+  const baseUrl = process.env.RYZE_API_BASE_URL || "https://ryzeapi.cloud";
+  const parsed = new URL(baseUrl);
+  assertSafeOutboundUrl(parsed.toString());
+  await assertDestinoResolvidoSeguro(parsed.hostname);
+  const url = `${baseUrl.replace(/\/$/, "")}/api/instance/${action}/${encodeURIComponent(instanceName)}`;
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json", token: accountToken },
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = await response.text();
+  let json: Record<string, unknown> = {};
+  try { json = JSON.parse(text) as Record<string, unknown>; } catch { /* handled below */ }
+  if (!response.ok) throw new Error(`ryze_instance_${action}_failed: HTTP ${response.status}`);
+  if (json.success === false) throw new Error(`ryze_instance_${action}_rejected`);
+  return json;
+}
+
+export function reconnectRyzeInstance(instanceName: string): Promise<Record<string, unknown>> {
+  return ryzeInstanceRequest("POST", instanceName, "reconnect");
+}
+
+type RyzeWebhookConfig = {
+  label?: string;
+  enabled?: boolean;
+  url?: string;
+  authorization?: string;
+  byEvents?: boolean;
+  events?: unknown;
+  mediaBase64?: boolean;
+};
+
+function ryzeWebhookUrl(instanceName: string): string {
+  const baseUrl = (process.env.RYZE_API_BASE_URL || "https://ryzeapi.cloud").replace(/\/$/, "");
+  return `${baseUrl}/api/events/webhook/${encodeURIComponent(instanceName)}`;
+}
+
+async function ryzeWebhookRequest(
+  method: "GET" | "POST",
+  instanceName: string,
+  tokenInstance: string,
+  body?: Record<string, unknown>,
+  query?: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${ryzeWebhookUrl(instanceName)}${query ?? ""}`, {
+    method,
+    headers: { "Content-Type": "application/json", token: tokenInstance },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = await response.text();
+  let json: Record<string, unknown> = {};
+  try { json = JSON.parse(text) as Record<string, unknown>; } catch { /* handled below */ }
+  if (!response.ok || json.success === false) {
+    throw new Error(`ryze_webhook_${method.toLowerCase()}_failed: HTTP ${response.status}`);
+  }
+  return json;
+}
+
+function webhookMatchesExpected(
+  webhook: RyzeWebhookConfig | undefined,
+  expectedUrl: string,
+  expectedAuthorization: string,
+): boolean {
+  return Boolean(
+    webhook?.label === "default" &&
+    webhook.enabled === true &&
+    webhook.url === expectedUrl &&
+    webhook.authorization === expectedAuthorization &&
+    webhook.byEvents === false &&
+    Array.isArray(webhook.events) &&
+    webhook.events.length === 1 &&
+    webhook.events[0] === "message.exchange" &&
+    webhook.mediaBase64 === false,
+  );
+}
+
+/** Reconcile the existing provider webhook; never creates a Ryze instance. */
+export async function reconcileRyzeWebhook(
+  db: SupabaseClient,
+  params: { organizationId: string; instanceName: string },
+): Promise<void> {
+  const { data: session, error } = await db
+    .from("channel_sessions")
+    .select("id, webhook_path_token, webhook_secret_encrypted")
+    .eq("organization_id", params.organizationId)
+    .eq("provider", "ryze")
+    .eq("ryze_instance_name", params.instanceName)
+    .is("archived_at", null)
+    .maybeSingle();
+  if (error || !session?.webhook_path_token || !session.webhook_secret_encrypted) {
+    throw new Error("ryze_webhook_session_credentials_missing");
+  }
+
+  const creds = await resolveRyzeCreds(db, params);
+  const webhookSecret = await decryptWebhookSecret(db, session.webhook_secret_encrypted as string);
+  if (!creds?.tokenInstance || !webhookSecret || webhookSecret.length < 16) {
+    throw new Error("ryze_webhook_credentials_unavailable");
+  }
+
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "").replace(/\/$/, "");
+  if (!appUrl) throw new Error("ryze_webhook_app_url_missing");
+  const expectedUrl = `${appUrl}/api/v1/webhooks/channel/${session.webhook_path_token}`;
+  const expectedAuthorization = `Bearer ${webhookSecret}`;
+
+  const listed = await ryzeWebhookRequest("GET", params.instanceName, creds.tokenInstance);
+  const webhooks = Array.isArray(listed.webhooks) ? listed.webhooks as RyzeWebhookConfig[] : [];
+  for (const webhook of webhooks) {
+    if (webhook.enabled === true && webhook.label && webhook.label !== "default") {
+      await ryzeWebhookRequest("POST", params.instanceName, creds.tokenInstance, { label: webhook.label, enabled: false });
+    }
+  }
+
+  await ryzeWebhookRequest("POST", params.instanceName, creds.tokenInstance, {
+    label: "default",
+    enabled: true,
+    url: expectedUrl,
+    authorization: expectedAuthorization,
+    byEvents: false,
+    events: ["message.exchange"],
+    mediaBase64: false,
+  });
+
+  const readBack = await ryzeWebhookRequest("GET", params.instanceName, creds.tokenInstance, undefined, "?label=default");
+  const webhook = (readBack.webhook ?? (Array.isArray(readBack.webhooks) ? readBack.webhooks[0] : undefined)) as RyzeWebhookConfig | undefined;
+  if (!webhookMatchesExpected(webhook, expectedUrl, expectedAuthorization)) {
+    throw new Error("ryze_webhook_readback_mismatch");
+  }
+}
+
+export function deleteRyzeInstance(instanceName: string): Promise<Record<string, unknown>> {
+  return ryzeInstanceRequest("DELETE", instanceName, "delete");
 }
 
 export async function lookupRyzeSession(
@@ -151,38 +289,6 @@ export async function persistRyzeSession(
   return { action: "inserted" };
 }
 
-async function configureRyzeWebhook(params: {
-  instanceName: string;
-  instanceToken: string;
-  webhookPathToken: string;
-  webhookSecret: string;
-  baseUrl: string;
-}): Promise<void> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (!appUrl) throw new Error("ryze_webhook_base_url_missing: NEXT_PUBLIC_APP_URL ausente no runtime");
-  const webhookUrl = `${appUrl.replace(/\/$/, "")}/api/v1/webhooks/channel/${params.webhookPathToken}`;
-  const headers = { "Content-Type": "application/json", token: params.instanceToken };
-  const update = await fetch(`${params.baseUrl}/api/events/webhook/${encodeURIComponent(params.instanceName)}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ label: "default", enabled: true, url: webhookUrl, authorization: `Bearer ${params.webhookSecret}`, byEvents: false, events: ["message.exchange"], mediaBase64: false }),
-  });
-  if (!update.ok) throw new Error(`ryze_webhook_configure_failed: HTTP ${update.status}`);
-  const readback = await fetch(`${params.baseUrl}/api/events/getWebhook/${encodeURIComponent(params.instanceName)}`, { headers });
-  if (!readback.ok) throw new Error(`ryze_webhook_readback_failed: HTTP ${readback.status}`);
-  const json = (await readback.json().catch(() => null)) as { webhooks?: Array<Record<string, unknown>> } | null;
-  const webhooks = Array.isArray(json?.webhooks) ? json.webhooks : [];
-  const active = webhooks.filter((webhook) => webhook.enabled === true);
-  const primary = active.find((webhook) => webhook.label === "default");
-  if (!primary || primary.url !== webhookUrl || primary.byEvents !== false || primary.mediaBase64 !== false || JSON.stringify(primary.events) !== JSON.stringify(["message.exchange"])) {
-    throw new Error("ryze_webhook_readback_mismatch: configuração oficial divergente");
-  }
-  for (const duplicate of active.filter((webhook) => webhook.label !== "default" && typeof webhook.label === "string")) {
-    const disable = await fetch(`${params.baseUrl}/api/events/webhook/${encodeURIComponent(params.instanceName)}`, { method: "POST", headers, body: JSON.stringify({ label: duplicate.label, enabled: false }) });
-    if (!disable.ok) throw new Error(`ryze_webhook_duplicate_disable_failed: HTTP ${disable.status}`);
-  }
-}
-
 /**
  * Provisiona ou reutiliza uma instância Ryze para uma organização (idempotente).
  * Se a listagem falhar ou for inválida, falha fechado (CREATE = 0).
@@ -226,8 +332,13 @@ export async function provisionRyzeInstance(params: {
         .maybeSingle();
 
       if (dbCred?.ryze_token_encrypted) {
-        tokenInstance = (await decryptWebhookSecret(db, dbCred.ryze_token_encrypted)) ?? undefined;
-      } else {
+        const persisted = await resolveRyzeCreds(db, { organizationId, instanceName });
+        if (persisted?.tokenInstance) {
+          tokenInstance = persisted.tokenInstance;
+        }
+      }
+
+      if (!tokenInstance) {
         throw new Error("ryze_existing_instance_token_unavailable: a instancia ja existe no plano de controle mas o token nao esta disponivel para re-vinculo");
       }
     }
@@ -274,7 +385,6 @@ export async function provisionRyzeInstance(params: {
   }
 
   // 2. Cifrar TokenInstance e, para uma nova sessão, gerar e cifrar webhook secret real.
-  if (!tokenInstance) throw new Error("ryze_token_instance_missing: TokenInstance indisponível para reconciliar webhook");
   const encryptedToken = await encryptWebhookSecret(db, tokenInstance);
   if (!encryptedToken) {
     throw new Error("ryze_control_encrypt_failed: falha ao criptografar TokenInstance");
@@ -300,23 +410,6 @@ export async function provisionRyzeInstance(params: {
     encryptedToken,
     webhookSecretEncrypted,
   });
-
-  const { data: persistedSession, error: persistedSessionError } = await db
-    .from("channel_sessions")
-    .select("webhook_path_token, webhook_secret_encrypted, ryze_token_encrypted")
-    .eq("organization_id", organizationId)
-    .eq("provider", "ryze")
-    .eq("ryze_instance_name", instanceName)
-    .is("archived_at", null)
-    .maybeSingle();
-  if (persistedSessionError || !persistedSession) {
-    if (process.env.NODE_ENV === "production") throw new Error("ryze_webhook_session_readback_failed");
-    return { instanceName, isNew };
-  }
-  const webhookSecret = await decryptWebhookSecret(db, String(persistedSession.webhook_secret_encrypted));
-  const persistedInstanceToken = tokenInstance ?? (await decryptWebhookSecret(db, String(persistedSession.ryze_token_encrypted)));
-  if (typeof persistedSession.webhook_path_token !== "string" || !webhookSecret || !persistedInstanceToken) throw new Error("ryze_webhook_credentials_missing");
-  await configureRyzeWebhook({ instanceName, instanceToken: persistedInstanceToken, webhookPathToken: persistedSession.webhook_path_token, webhookSecret, baseUrl });
 
   return { instanceName, isNew };
 }

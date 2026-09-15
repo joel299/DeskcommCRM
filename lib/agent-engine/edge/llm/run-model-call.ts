@@ -48,6 +48,22 @@ export type { ModelMessage, ToolSet } from 'ai';
 export type { LlmEdgeConfig } from './credentials';
 export { llmEdgeConfigFromEnv, LlmNotConfiguredError } from './credentials';
 
+/**
+ * O endpoint OpenAI-compatível do OmniRoute não aceita partes Responses API
+ * como `item_reference`. O AI SDK pode carregá-las em mensagens de tool/result
+ * entre tentativas; remova somente essa parte antes do Chat Completions, sem
+ * alterar texto, imagens ou chamadas de função suportadas.
+ */
+export function normalizarMensagensOpenAiCompat(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    const content = message.content.filter((part) => {
+      return (part as { type?: string }).type !== 'item_reference';
+    });
+    return { ...message, content } as ModelMessage;
+  });
+}
+
 /** Teto mensal da org esgotado — runs recusados ANTES do provider (zero tokens). */
 export class LlmBudgetExceededError extends Error {
   override readonly name = 'llm_budget_exceeded';
@@ -424,7 +440,10 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
       // ignoram o terceiro argumento e vão ao endpoint intrínseco.
       model: factory(config.apiKey, model, decisao.baseUrl ?? undefined),
       system: prefix.system,
-      messages: input.messages,
+      messages:
+        config.provider === 'omniroute'
+          ? normalizarMensagensOpenAiCompat(input.messages)
+          : input.messages,
       tools: guardServiceTools(prefix.tools),
       stopWhen: input.maxSteps === undefined ? undefined : stepCountIs(input.maxSteps),
       temperature,

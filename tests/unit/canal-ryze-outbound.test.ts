@@ -427,25 +427,15 @@ describe("adapter outbound ryze & control plane (F3)", () => {
           json: async () => ({ success: true, instance: { name: "inst_idempotent", token: "tok_idempotent" } }),
         })
         .mockResolvedValueOnce({
-                  ok: true,
-                  status: 200,
-                  json: async () => ({ success: true, webhooks: [{ label: "default", enabled: true, byEvents: false, events: ["message.exchange"], mediaBase64: false, url: "https://example.test/api/v1/webhooks/channel/webhook-token" }] }),
-                })
-                .mockResolvedValueOnce({
-                  ok: true,
-                  status: 200,
-                  json: async () => ({ success: true, webhooks: [{ label: "default", enabled: true, byEvents: false, events: ["message.exchange"], mediaBase64: false, url: "https://example.test/api/v1/webhooks/channel/webhook-token" }] }),
-                })
-                .mockResolvedValueOnce({
-                  ok: true,
-                  status: 200,
-                  json: async () => ({ success: true, instances: [{ id: "2", name: "inst_idempotent", token: "tok_idempotent" }] }),
-                })
-                .mockResolvedValue({
-                  ok: true,
-                  status: 200,
-                  json: async () => ({ success: true, webhooks: [{ label: "default", enabled: true, byEvents: false, events: ["message.exchange"], mediaBase64: false, url: "https://example.test/api/v1/webhooks/channel/webhook-token" }] }),
-                });
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, instances: [{ id: "2", name: "inst_idempotent", token: "tok_idempotent" }] }),
+        })
+        .mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, instances: [{ id: "2", name: "inst_idempotent", token: "tok_idempotent" }] }),
+        });
 
       vi.stubGlobal("fetch", mockFetch);
       vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://example.test");

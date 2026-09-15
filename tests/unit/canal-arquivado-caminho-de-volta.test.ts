@@ -69,7 +69,7 @@ vi.mock("@/lib/channels/connect-ryze", () => ({
         channel.phone_number = null;
         registro.escritas.push({ tipo: "update", table: "channel_sessions", patch: { archived_at: null, status: "STARTING", phone_number: null }, recusada: false });
         ryzeFixture.startExistingSession(NOME_SESSAO);
-        await audit({ action: "channel.reactivated", organizationId: input.organizationId, actorUserId: USER, resourceType: "channel_session", resourceId: channel.id });
+        await audit({ action: "channel.reactivated", organizationId: input.organizationId, actorUserId: USER, resourceType: "channel_session", resourceId: String(channel.id ?? "") });
       }
       return { channel, replay: true, instanceName: NOME_SESSAO, isNew: false };
     }

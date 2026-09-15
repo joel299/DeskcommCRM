@@ -427,22 +427,37 @@ describe("adapter outbound ryze & control plane (F3)", () => {
           json: async () => ({ success: true, instance: { name: "inst_idempotent", token: "tok_idempotent" } }),
         })
         .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({
-            success: true,
-            instances: [{ id: "2", name: "inst_idempotent", token: "tok_idempotent" }],
-          }),
-        });
+                  ok: true,
+                  status: 200,
+                  json: async () => ({ success: true, webhooks: [{ label: "default", enabled: true, byEvents: false, events: ["message.exchange"], mediaBase64: false, url: "https://example.test/api/v1/webhooks/channel/webhook-token" }] }),
+                })
+                .mockResolvedValueOnce({
+                  ok: true,
+                  status: 200,
+                  json: async () => ({ success: true, webhooks: [{ label: "default", enabled: true, byEvents: false, events: ["message.exchange"], mediaBase64: false, url: "https://example.test/api/v1/webhooks/channel/webhook-token" }] }),
+                })
+                .mockResolvedValueOnce({
+                  ok: true,
+                  status: 200,
+                  json: async () => ({ success: true, instances: [{ id: "2", name: "inst_idempotent", token: "tok_idempotent" }] }),
+                })
+                .mockResolvedValue({
+                  ok: true,
+                  status: 200,
+                  json: async () => ({ success: true, webhooks: [{ label: "default", enabled: true, byEvents: false, events: ["message.exchange"], mediaBase64: false, url: "https://example.test/api/v1/webhooks/channel/webhook-token" }] }),
+                });
 
       vi.stubGlobal("fetch", mockFetch);
+      vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://example.test");
 
       const fakeInsert = vi.fn().mockResolvedValue({ data: { id: "sess-1" }, error: null });
       const fakeSelect = vi.fn()
         .mockResolvedValueOnce({ data: null, error: null }) // 1º cycle: lookup do provisionamento
         .mockResolvedValueOnce({ data: null, error: null }) // 1º cycle: lookup da persistência
+        .mockResolvedValueOnce({ data: { id: "sess-1", webhook_path_token: "webhook-token", webhook_secret_encrypted: "cipher", ryze_token_encrypted: "cipher" }, error: null }) // 1º cycle: read-back do webhook
         .mockResolvedValueOnce({ data: { id: "sess-1" }, error: null }) // 2º cycle: lookup do provisionamento
-        .mockResolvedValueOnce({ data: { id: "sess-1" }, error: null }); // 2º cycle: lookup da persistência
+        .mockResolvedValueOnce({ data: { id: "sess-1" }, error: null }) // 2º cycle: lookup da persistência
+        .mockResolvedValueOnce({ data: { id: "sess-1", webhook_path_token: "webhook-token", webhook_secret_encrypted: "cipher", ryze_token_encrypted: "cipher" }, error: null }); // 2º cycle: read-back do webhook
 
       const fakeDb = {
         from: vi.fn().mockReturnThis(),

@@ -7,38 +7,24 @@
 export function splitIntoBubbles(text: string, maxChars: number): string[] {
   const trimmed = (text ?? "").trim();
   if (trimmed === "") return [];
-  if (trimmed.length <= maxChars) return [trimmed];
+  if (trimmed.length <= maxChars && !/\n{2,}/.test(trimmed)) return [trimmed];
 
-  // Unidades atômicas: parágrafos → sentenças. Cada unidade que ainda estoura é
-  // quebrada por palavra.
-  const units: string[] = [];
+  // Cada parágrafo é uma mensagem própria. Nunca juntar unidades de parágrafos
+  // diferentes. Se um único parágrafo exceder o limite, só ele é subdividido.
+  const bubbles: string[] = [];
   for (const para of trimmed.split(/\n{2,}/)) {
     const p = para.trim();
     if (p === "") continue;
     if (p.length <= maxChars) {
-      units.push(p);
+      bubbles.push(p);
       continue;
     }
     for (const sentence of splitSentences(p)) {
-      if (sentence.length <= maxChars) units.push(sentence);
-      else units.push(...splitWords(sentence, maxChars));
+      if (sentence.length <= maxChars) bubbles.push(sentence);
+      else bubbles.push(...splitWords(sentence, maxChars));
     }
   }
-
-  // Junta unidades adjacentes enquanto couberem (com espaço).
-  const bubbles: string[] = [];
-  let cur = "";
-  for (const u of units) {
-    const joined = cur === "" ? u : `${cur} ${u}`;
-    if (joined.length <= maxChars) {
-      cur = joined;
-    } else {
-      if (cur !== "") bubbles.push(cur);
-      cur = u;
-    }
-  }
-  if (cur !== "") bubbles.push(cur);
-  return bubbles;
+  return bubbles.filter((bubble) => bubble.trim() !== "");
 }
 
 /**

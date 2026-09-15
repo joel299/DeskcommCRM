@@ -137,6 +137,7 @@ const schema = z.object({
   SUPABASE_DB_ADMIN_URL: z.string().optional().default(""),
 
   // WAHA
+  ACTIVE_CHANNEL_PROVIDER: z.enum(["waha", "ryze"]).default("ryze"),
   WAHA_API_BASE_URL: required("WAHA_API_BASE_URL"),
   WAHA_API_KEY: required("WAHA_API_KEY"),
   WAHA_WEBHOOK_BASE_URL: required("WAHA_WEBHOOK_BASE_URL"),
@@ -164,6 +165,11 @@ const schema = z.object({
   // por lá. Ver resolveLanguageModel() em lib/ai/gateway.ts.
   OPENROUTER_API_KEY: z.string().optional().default(""),
   OPENROUTER_BASE_URL: z.string().optional().default(""),
+  // OmniRoute shadow: explicit opt-in only; never enabled by default.
+  OMNIROUTE_SHADOW_ENABLED: z.string().optional().default("false"),
+  OMNIROUTE_BASE_URL: z.string().optional().default(""),
+  OMNIROUTE_API_KEY: z.string().optional().default(""),
+  OMNIROUTE_MODEL: z.string().optional().default(""),
   // Atribuição OPCIONAL da OpenRouter (`HTTP-Referer` / `X-Title`): identifica a
   // instalação no painel e no ranking público DELES. A doc da OpenRouter chama
   // os dois de opcionais e a chamada funciona sem — por isso default vazio e

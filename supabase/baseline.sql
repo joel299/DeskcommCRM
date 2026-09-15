@@ -1890,7 +1890,126 @@ CREATE TABLE IF NOT EXISTS "public"."webhook_events_log" (
 );
 
 
+CREATE TABLE IF NOT EXISTS "public"."ryze_webhook_events" (
+    "organization_id" uuid NOT NULL,
+    "channel_session_id" uuid NOT NULL,
+    "event_id" text NOT NULL,
+    "event_type" text NOT NULL,
+    "state" text DEFAULT 'processing'::text NOT NULL,
+    "attempts" integer DEFAULT 1 NOT NULL,
+    "locked_until" timestamp with time zone DEFAULT (now() + '00:05:00'::interval) NOT NULL,
+    "completed_at" timestamp with time zone,
+    "last_error_code" text,
+  "claim_token" uuid,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "ryze_webhook_events_state_check" CHECK (("state" = ANY (ARRAY['processing'::text, 'processed'::text, 'failed'::text]))),
+    CONSTRAINT "ryze_webhook_events_pkey" PRIMARY KEY ("organization_id", "channel_session_id", "event_id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_ryze_webhook_events_created_at" ON "public"."ryze_webhook_events" USING "btree" ("created_at" DESC);
+ALTER TABLE "public"."ryze_webhook_events" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE "public"."ryze_webhook_events" FROM "anon", "authenticated";
+GRANT ALL ON TABLE "public"."ryze_webhook_events" TO "service_role";
+
+CREATE OR REPLACE FUNCTION "public"."fn_claim_ryze_webhook_event"("p_org" uuid, "p_session" uuid, "p_event" text, "p_event_type" text)
+RETURNS TABLE("outcome" text, "claim_token" uuid)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE "v_token" uuid := gen_random_uuid(); "v_state" text; "v_rows" integer;
+BEGIN
+  INSERT INTO public.ryze_webhook_events (organization_id,channel_session_id,event_id,event_type,state,attempts,locked_until,claim_token)
+  VALUES (p_org,p_session,p_event,p_event_type,'processing',1,now()+interval '5 minutes',v_token)
+  ON CONFLICT (organization_id,channel_session_id,event_id) DO UPDATE SET state='processing',attempts=public.ryze_webhook_events.attempts+1,locked_until=now()+interval '5 minutes',claim_token=v_token,last_error_code=null
+  WHERE public.ryze_webhook_events.state='failed' OR (public.ryze_webhook_events.state='processing' AND public.ryze_webhook_events.locked_until<=now())
+  RETURNING public.ryze_webhook_events.claim_token INTO "claim_token";
+  GET DIAGNOSTICS "v_rows" = ROW_COUNT;
+  IF "v_rows" = 0 THEN
+    SELECT state INTO "v_state" FROM public.ryze_webhook_events WHERE organization_id=p_org AND channel_session_id=p_session AND event_id=p_event;
+    IF "v_state"='processed' THEN RETURN QUERY SELECT 'already_processed'::text,null::uuid; ELSE RETURN QUERY SELECT 'busy'::text,null::uuid; END IF;
+    RETURN;
+  END IF;
+  RETURN QUERY SELECT 'claimed'::text,"claim_token";
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."fn_finish_ryze_webhook_event"("p_org" uuid, "p_session" uuid, "p_event" text, "p_claim_token" uuid, "p_state" text, "p_error_code" text DEFAULT NULL::text)
+RETURNS boolean
+LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  UPDATE public.ryze_webhook_events SET state = p_state, completed_at = CASE WHEN p_state = 'processed' THEN now() ELSE null END, locked_until = now(), last_error_code = p_error_code
+  WHERE organization_id = p_org AND channel_session_id = p_session AND event_id = p_event AND claim_token = p_claim_token AND state = 'processing'
+  RETURNING true;
+$$;
+
+REVOKE ALL ON FUNCTION "public"."fn_claim_ryze_webhook_event"(uuid, uuid, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION "public"."fn_finish_ryze_webhook_event"(uuid, uuid, text, uuid, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION "public"."fn_claim_ryze_webhook_event"(uuid, uuid, text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION "public"."fn_finish_ryze_webhook_event"(uuid, uuid, text, uuid, text, text) TO service_role;
+
+CREATE TABLE IF NOT EXISTS "public"."ryze_message_effects" (
+  "organization_id" uuid NOT NULL,
+  "channel_session_id" uuid NOT NULL,
+  "message_id" uuid NOT NULL,
+  "conversation_id" uuid NOT NULL,
+  "contact_id" uuid NOT NULL,
+  "state" text DEFAULT 'processing'::text NOT NULL,
+  "locked_until" timestamp with time zone DEFAULT (now() + '00:05:00'::interval) NOT NULL,
+  "claim_token" uuid NOT NULL,
+  "mark_completed_at" timestamp with time zone,
+  "completed_at" timestamp with time zone,
+  CONSTRAINT "ryze_message_effects_state_check" CHECK ("state" = ANY (ARRAY['processing'::text, 'processed'::text, 'failed'::text])),
+  CONSTRAINT "ryze_message_effects_pkey" PRIMARY KEY ("organization_id", "channel_session_id", "message_id")
+);
+ALTER TABLE "public"."ryze_message_effects" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE "public"."ryze_message_effects" FROM "anon", "authenticated";
+GRANT ALL ON TABLE "public"."ryze_message_effects" TO "service_role";
+
+CREATE OR REPLACE FUNCTION "public"."fn_claim_ryze_message_effects"("p_org" uuid, "p_session" uuid, "p_message" uuid, "p_conversation" uuid, "p_contact" uuid, "p_preview" text, "p_at" timestamp with time zone)
+RETURNS TABLE("outcome" text, "claim_token" uuid)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE "v_token" uuid := gen_random_uuid(); "v_rows" integer; "v_state" text; "v_marked" timestamp with time zone;
+BEGIN
+  INSERT INTO public.ryze_message_effects (organization_id, channel_session_id, message_id, conversation_id, contact_id, claim_token)
+  VALUES (p_org, p_session, p_message, p_conversation, p_contact, v_token) ON CONFLICT (organization_id, channel_session_id, message_id) DO NOTHING;
+  GET DIAGNOSTICS "v_rows" = ROW_COUNT;
+  IF "v_rows" = 0 THEN
+    SELECT state, mark_completed_at INTO v_state, v_marked FROM public.ryze_message_effects WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message;
+    IF v_state = 'processed' THEN RETURN QUERY SELECT 'already_processed'::text, null::uuid; RETURN; END IF;
+    UPDATE public.ryze_message_effects SET state='processing', locked_until=now()+interval '5 minutes', claim_token=v_token WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message AND state IN ('processing','failed') AND locked_until <= now();
+    IF NOT FOUND THEN RETURN QUERY SELECT 'busy'::text, null::uuid; RETURN; END IF;
+  END IF;
+  IF "v_rows" = 1 OR v_marked IS NULL THEN
+    PERFORM public.fn_mark_conversation_message(p_conversation, 'inbound', p_preview, p_at);
+    UPDATE public.ryze_message_effects SET mark_completed_at=now() WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message AND "public"."ryze_message_effects"."claim_token"=v_token;
+  END IF;
+  RETURN QUERY SELECT 'claimed'::text, v_token;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."fn_finish_ryze_message_effects"("p_org" uuid, "p_session" uuid, "p_message" uuid, "p_claim_token" uuid)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE "v_ok" boolean;
+BEGIN
+  UPDATE public.ryze_message_effects SET state='processed', completed_at=now(), locked_until=now() WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message AND claim_token=p_claim_token AND state='processing' RETURNING true INTO "v_ok";
+  RETURN coalesce("v_ok", false);
+END;
+$$;
+REVOKE ALL ON FUNCTION "public"."fn_claim_ryze_message_effects"(uuid, uuid, uuid, uuid, uuid, text, timestamp with time zone) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION "public"."fn_finish_ryze_message_effects"(uuid, uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION "public"."fn_claim_ryze_message_effects"(uuid, uuid, uuid, uuid, uuid, text, timestamp with time zone) TO service_role;
+GRANT EXECUTE ON FUNCTION "public"."fn_finish_ryze_message_effects"(uuid, uuid, uuid, uuid) TO service_role;
+
+CREATE OR REPLACE FUNCTION "public"."fn_fail_ryze_message_effects"("p_org" uuid, "p_session" uuid, "p_message" uuid, "p_claim_token" uuid)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE "v_ok" boolean;
+BEGIN
+ UPDATE public.ryze_message_effects SET state='failed',locked_until=now() WHERE organization_id=p_org AND channel_session_id=p_session AND message_id=p_message AND claim_token=p_claim_token AND state='processing' RETURNING true INTO "v_ok";
+ RETURN coalesce("v_ok", false);
+END;
+$$;
+REVOKE ALL ON FUNCTION "public"."fn_fail_ryze_message_effects"(uuid, uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION "public"."fn_fail_ryze_message_effects"(uuid, uuid, uuid, uuid) TO service_role;
+
 ALTER TABLE "public"."webhook_events_log" OWNER TO "postgres";
+
 
 
 DO $baseline_guard$ BEGIN
@@ -9380,11 +9499,15 @@ alter table public.channel_sessions
   add column if not exists zernio_account_id text;
 
 alter table public.channel_sessions
+  add column if not exists ryze_instance_name text,
+  add column if not exists ryze_token_encrypted bytea;
+
+alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_check;
 
 alter table public.channel_sessions
   add constraint channel_sessions_provider_check
-  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text]));
+  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text, 'ryze'::text]));
 
 alter table public.channel_sessions
   drop constraint if exists channel_sessions_provider_ref_check;
@@ -9393,7 +9516,8 @@ alter table public.channel_sessions
   add constraint channel_sessions_provider_ref_check check (
     (provider = 'waha'       and waha_session_name    is not null) or
     (provider = 'meta_cloud' and meta_phone_number_id is not null) or
-    (provider = 'zernio'     and zernio_account_id    is not null)
+    (provider = 'zernio'     and zernio_account_id    is not null) or
+    (provider = 'ryze'       and ryze_instance_name   is not null)
   );
 
 comment on column public.channel_sessions.zernio_account_id is
@@ -14283,7 +14407,7 @@ alter table public.webhook_events_log
   drop constraint if exists webhook_events_log_provider_check;
 alter table public.webhook_events_log
   add constraint webhook_events_log_provider_check check (provider in (
-    'waha', 'nuvemshop', 'generic', 'meta_cloud', 'zernio'
+    'waha', 'nuvemshop', 'generic', 'meta_cloud', 'zernio', 'ryze'
   ));
 
 -- ---- a marca da instalação sai do .env e vai para o banco (migration 0155) ----
@@ -23204,6 +23328,70 @@ revoke all on function public.fn_reserve_channel_connection(uuid,uuid,text,text,
 grant execute on function public.fn_reserve_channel_connection(uuid,uuid,text,text,boolean) to authenticated;
 
 notify pgrst,'reload schema';
+
+-- -----------------------------------------------------------------------------
+-- MIGRATION APÊNDICE: 20260910180000_0238_canal_ryze_vocabulario.sql
+-- -----------------------------------------------------------------------------
+alter table public.channel_sessions
+  add column if not exists ryze_instance_name text,
+  add column if not exists ryze_token_encrypted bytea;
+
+create unique index if not exists idx_channel_sessions_ryze_instance_name_active
+  on public.channel_sessions (ryze_instance_name)
+  where archived_at is null and ryze_instance_name is not null;
+
+-- F4 Ryze: dispatch durável exactly-once por mensagem.
+create table if not exists public.ryze_message_dispatches (
+  organization_id uuid not null,
+  channel_session_id uuid not null,
+  message_id uuid not null,
+  event_type text not null check (event_type = 'ai_agent.dispatch_requested'),
+  state text not null default 'processed' check (state = 'processed'),
+  event_id uuid not null,
+  created_at timestamptz not null default now(),
+  primary key (organization_id, channel_session_id, message_id),
+  unique (organization_id, channel_session_id, event_type, message_id)
+);
+
+alter table public.ryze_message_dispatches enable row level security;
+revoke all on table public.ryze_message_dispatches from public, anon, authenticated;
+grant all on table public.ryze_message_dispatches to service_role;
+
+drop function if exists public.fn_emit_ryze_dispatch_once(uuid, uuid, uuid, uuid, uuid, uuid, jsonb, jsonb);
+create or replace function public.fn_emit_ryze_dispatch_once(
+  p_org uuid, p_session uuid, p_message uuid, p_conversation uuid,
+  p_contact uuid, p_request uuid, p_payload jsonb, p_metadata jsonb
+)
+returns table (outcome text, event_id uuid)
+language plpgsql security definer set search_path = public
+as $$
+declare v_event uuid; v_rows integer;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(
+    p_org::text || ':' || p_session::text || ':' || p_message::text || ':ai_agent.dispatch_requested', 0
+  ));
+  select d.event_id into v_event from public.ryze_message_dispatches as d
+   where d.organization_id=p_org and d.channel_session_id=p_session and d.message_id=p_message
+     and d.event_type='ai_agent.dispatch_requested';
+  if v_event is not null then return query select 'already_processed'::text, v_event; return; end if;
+  v_event := public.emit_event('ai_agent.dispatch_requested', 'message', p_message,
+    coalesce(p_payload, '{}'::jsonb),
+    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object('request_id', p_request), p_org);
+  insert into public.ryze_message_dispatches
+    (organization_id, channel_session_id, message_id, event_type, event_id)
+  values (p_org, p_session, p_message, 'ai_agent.dispatch_requested', v_event)
+  on conflict (organization_id, channel_session_id, message_id) do nothing;
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    select d.event_id into v_event from public.ryze_message_dispatches as d
+     where d.organization_id=p_org and d.channel_session_id=p_session and d.message_id=p_message;
+    return query select 'already_processed'::text, v_event; return;
+  end if;
+  return query select 'processed'::text, v_event;
+end;
+$$;
+revoke all on function public.fn_emit_ryze_dispatch_once(uuid, uuid, uuid, uuid, uuid, uuid, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.fn_emit_ryze_dispatch_once(uuid, uuid, uuid, uuid, uuid, uuid, jsonb, jsonb) to service_role;
 
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --

@@ -74,6 +74,16 @@ export const PROVEDORES = [
     prefixoDaChave: "AIza…",
   },
   {
+    id: "omniroute",
+    rotulo: "OmniRoute (gateway OpenAI-compatible)",
+    quandoUsar:
+      "Gateway interno para rotear modelos OpenAI-compatible com autenticação própria e fallback controlado.",
+    aceitaEndpointProprio: true,
+    catalogoSincronizavel: true,
+    ondePegarAChave: "https://omnirouter.iainfinito.com.br/",
+    prefixoDaChave: "Bearer …",
+  },
+  {
     id: "openrouter",
     rotulo: "OpenRouter",
     quandoUsar:

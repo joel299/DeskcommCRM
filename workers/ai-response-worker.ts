@@ -708,6 +708,20 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
   const inbound_body = (msg.body ?? "").trim();
   if (!inbound_body) return skip("empty_inbound_body");
 
+  // O vínculo é escopado pela organização e pela sessão. Consultar o agente
+  // legado antes desta guarda fazia uma sessão Ryze publicada retornar
+  // `agent_inactive_or_missing` e impedia o agent-engine de responder.
+  const { data: publicado } = await admin
+    .from("ai_agent_versions")
+    .select("agent_id, ai_agents!inner(id, archived_at)")
+    .eq("organization_id", input.organizationId)
+    .eq("channel_session_id", c.channel_session_id)
+    .eq("status", "published")
+    .is("ai_agents.archived_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (publicado) return skip("engine_owns_reply");
+
   // O agente legado desta organização.
   //
   // `is_active` sozinho NÃO é "quem atende", e tratá-lo como se fosse era o
@@ -749,36 +763,6 @@ async function buildContext(input: BuildContextInput): Promise<GuardDecision> {
 
   if (!agent) return skip("agent_inactive_or_missing");
 
-  // O ENGINE É O DONO DA RESPOSTA QUANDO HÁ VERSÃO PUBLICADA (issue #129).
-  //
-  // `lib/waha/ingest.ts` emite, para cada inbound, `ai_agent.dispatch_requested`
-  // (drenado pelo agent-engine) E `message.received` (drenado por este worker),
-  // incondicionalmente — e até aqui não havia trava nenhuma entre os dois. Numa
-  // instalação padrão os dois agiam na MESMA mensagem: o engine respondia de
-  // verdade, e este worker chamava o LLM (custo real, cobrado duas vezes) e
-  // inseria uma outbound `sending` que nunca saía, porque
-  // `message.send_requested` nunca teve consumidor.
-  //
-  // O critério é o MESMO que o engine usa para se considerar dono
-  // (`lib/agent-engine/agent/agent-config.ts`: join em `published_version_id`,
-  // não arquivado). Usar o mesmo predicado é o que garante que não existe buraco
-  // entre os dois: ou o engine responde, ou este worker responde — nunca
-  // nenhum, nunca os dois.
-  //
-  // Quem NÃO publicou versão nenhuma continua caindo aqui, como antes: sem
-  // `published_version_id` o engine não seleciona agente e não age. Por isso a
-  // trava não pode ser "existe engine rodando" — essa pergunta não é
-  // respondível daqui, e errá-la significaria silenciar a IA de quem depende
-  // deste caminho.
-  const { data: publicado } = await admin
-    .from("ai_agents")
-    .select("id")
-    .eq("organization_id", input.organizationId)
-    .not("published_version_id", "is", null)
-    .is("archived_at", null)
-    .limit(1)
-    .maybeSingle();
-  if (publicado) return skip("engine_owns_reply");
 
   // Base de conhecimento ausente NÃO cala mais o bot.
   //

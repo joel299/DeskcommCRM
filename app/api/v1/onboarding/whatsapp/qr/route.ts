@@ -1,47 +1,39 @@
-import { loadOnboardingChannel } from "@/lib/channels/onboarding-session";
-import { createClient } from "@/lib/supabase/server";
-import { NextResponse } from "next/server";
 import { loadAuthUser, resolveActiveOrg } from "@/lib/auth/server";
+import { createClient } from "@/lib/supabase/server";
+import { loadOnboardingChannel } from "@/lib/channels/onboarding-session";
+import { ok, fail } from "@/lib/api/wrappers";
 
-/**
- * Proxy WAHA's QR endpoint so the browser can <img src="..." /> without
- * exposing the API key.
- *
- * WAHA exposes: GET /api/{session}/auth/qr?format=image → image/png bytes.
- */
+/** QR de onboarding é provido pelo fluxo oficial Ryze; WAHA não participa. */
 export async function GET() {
   const user = await loadAuthUser();
-  if (!user) return new NextResponse(null, { status: 401 });
+  if (!user) return fail("unauthenticated", "Sessão expirada", 401);
   const activeOrg = await resolveActiveOrg(user);
-  if (!activeOrg) return new NextResponse(null, { status: 404 });
+  if (!activeOrg) return fail("tenant_not_found", "Sem organização ativa", 404);
 
-  const baseUrl = process.env.WAHA_API_BASE_URL;
-  const apiKey = process.env.WAHA_API_KEY;
-  if (!baseUrl || !apiKey || apiKey === "dev_plaintext_change_me") {
-    return new NextResponse(null, { status: 503 });
-  }
+  try {
+    const channel = await loadOnboardingChannel(await createClient(), activeOrg.orgId);
+    if (!channel || channel.archived_at) {
+      return ok({ status: "NOT_STARTED", session: null, provider: "ryze" });
+    }
 
-  const channel = await loadOnboardingChannel(await createClient(), activeOrg.orgId);
-  if (!channel || channel.archived_at) return new NextResponse(null, { status: 404 });
-  const sessionName = channel.waha_session_name;
-  const upstream = await fetch(
-    `${baseUrl}/api/${encodeURIComponent(sessionName)}/auth/qr?format=image`,
-    { headers: { "X-Api-Key": apiKey }, cache: "no-store" },
-  );
-  if (!upstream.ok) {
-    return new NextResponse(null, {
-      status: upstream.status,
-      headers: { "x-waha-status": String(upstream.status) },
+    // A instância existente e conectada não precisa de QR. Retornamos o estado
+    // real para o cliente encerrar o polling sem iniciar outro pareamento.
+    if (channel.status === "WORKING") {
+      return ok({
+        status: "WORKING",
+        session: channel.ryze_instance_name,
+        channel_session_id: channel.id,
+        provider: "ryze",
+      });
+    }
+
+    return ok({
+      status: channel.status,
+      session: channel.ryze_instance_name,
+      channel_session_id: channel.id,
+      provider: "ryze",
     });
+  } catch {
+    return fail("connection_status_failed", "Não foi possível consultar a instância Ryze.", 502);
   }
-
-  const ct = upstream.headers.get("content-type") ?? "image/png";
-  const buf = await upstream.arrayBuffer();
-  return new NextResponse(buf, {
-    status: 200,
-    headers: {
-      "content-type": ct,
-      "cache-control": "no-store, max-age=0",
-    },
-  });
 }

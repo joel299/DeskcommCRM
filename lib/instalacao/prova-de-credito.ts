@@ -83,6 +83,15 @@ export function montarRequisicaoDeProva(
         },
         body: { model: modelo, max_tokens: 1, messages: msg },
       };
+    case "omniroute":
+      return {
+        url: `${baseUrl ?? process.env.OMNIROUTE_BASE_URL ?? "https://omnirouter.iainfinito.com.br/v1"}/chat/completions`,
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json",
+        },
+        body: { model: modelo, max_tokens: 1, messages: msg },
+      };
     case "google":
       return {
         url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(

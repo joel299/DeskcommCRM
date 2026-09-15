@@ -25,7 +25,7 @@ import type pg from 'pg';
 import { withFields } from '../obs/logger';
 import type { JobRow } from '../queue/queue';
 import { getLeadContext, type LeadContext } from '../edge/crm/get-lead-context';
-import { WahaChannelAdapter } from '../edge/channel/waha-adapter';
+import { CrmChannelAdapter } from '@/lib/channels/adapters/crm';
 import { applySendOutcome } from '../edge/crm/send-message';
 import { runBeforeSend } from '../guardrails/before-send';
 import { camadaLigada, lerCamadasDaOrg } from '../guardrails/camadas-da-org';
@@ -564,7 +564,7 @@ async function sendFixedOutbound(
   }
   const optedOutThisTurn = context.context.contact.is_blocked;
 
-  const channel = (deps.channel ?? ((p: pg.Pool) => new WahaChannelAdapter(p, deps.crmCfg)))(pool);
+  const channel = (deps.channel ?? ((p: pg.Pool) => new CrmChannelAdapter(p, deps.crmCfg)))(pool);
 
   // A escolha da ORGANIZAÇÃO, e não só o knob do `.env` do worker. Lida aqui, e
   // não no chamador, para que o único caminho até `runBeforeSend` seja também o

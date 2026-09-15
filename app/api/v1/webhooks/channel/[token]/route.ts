@@ -35,10 +35,12 @@ import { ARCHIVED_AT, queryTolerantToMissingArchived } from "@/lib/channels/arch
 import {
   abrirArquivoDoWebhook,
   fecharArquivoDoWebhook,
+  sanitizarCorpoDoWebhook,
 } from "@/lib/channels/arquivo-de-webhook";
-import { acceptsInboundWebhook, handleInboundWebhook } from "@/lib/channels/inbound";
+import { acceptsInboundWebhook, handleInboundWebhook, mensagemSeguraDoInbound } from "@/lib/channels/inbound";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptWebhookSecret } from "@/lib/webhooks/secrets";
+
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -99,6 +101,9 @@ export async function POST(
   const cifrado = sessao.webhook_secret_encrypted;
   const secret = cifrado ? await decryptWebhookSecret(admin, cifrado as string) : null;
 
+  // O arquivo recebe somente a cópia sanitizada; o corpo cru permanece em memória.
+  const rawBodyForArchive = sanitizarCorpoDoWebhook(sessao.provider, rawBody);
+
   // ─── O corpo cru vai para o arquivo ANTES de qualquer processamento ────────
   //
   // Se o processo morrer no meio — exceção, OOM, deploy no instante errado — o
@@ -109,7 +114,7 @@ export async function POST(
     organizationId: sessao.organization_id,
     channelSessionId: sessao.id,
     provider: sessao.provider,
-    rawBody,
+    rawBody: rawBodyForArchive,
     headers: req.headers,
   });
 
@@ -133,27 +138,24 @@ export async function POST(
     }
 
     const status = r.code === "unauthorized" ? 401 : 400;
+    const mensagemPublica = mensagemSeguraDoInbound(sessao.provider, r.code, r.message);
     await fecharArquivoDoWebhook(admin, arquivo, {
       status: "error",
-      // `false` SÓ quando a recusa foi por assinatura. Um payload bem assinado
-      // que o parser recusou não é problema de segredo, e marcá-lo como se
-      // fosse mandaria quem investiga procurar no lugar errado.
       validSignature: r.code === "unauthorized" ? false : null,
-      erro: r.message,
+      erro: mensagemPublica,
     });
     return fail(
       r.code === "unauthorized" ? "unauthorized" : "invalid_request",
-      r.message,
+      mensagemPublica,
       status,
       { requestId },
     );
-  } catch (err) {
-    const detalhe = err instanceof Error ? err.message : "ingest_failed";
+  } catch {
     await fecharArquivoDoWebhook(admin, arquivo, {
       status: "error",
       validSignature: null,
-      erro: detalhe,
+      erro: "ingest_failed",
     });
-    return fail("internal_error", detalhe, 500, { requestId });
+    return fail("internal_error", "ingest_failed", 500, { requestId });
   }
 }

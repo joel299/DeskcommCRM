@@ -10,8 +10,8 @@ import { requireSupportWrite } from "@/lib/impersonate/support";
 import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 
-import { connectWahaChannel, ChannelConnectionError } from "@/lib/channels/connect-waha";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { connectRyzeChannel } from "@/lib/channels/connect-ryze";
+import { ChannelConnectionError } from "@/lib/channels/connect-waha";
 import { mfaEmDivida } from "@/lib/auth/server";
 import { ok, fail } from "@/lib/api/wrappers";
 import { loadAuthUser, resolveActiveOrg } from "@/lib/auth/server";
@@ -19,13 +19,13 @@ import { requireRole } from "@/lib/auth/require-role";
 import { ARCHIVED_AT, queryTolerantToMissingArchived } from "@/lib/channels/archived";
 import { createChannelSchema } from "@/lib/schemas/channels";
 import { createClient } from "@/lib/supabase/server";
-import { getWahaClient } from "@/lib/waha/client";
+
 import { traduzir } from "@/lib/i18n/dicionario";
 
 export const dynamic = "force-dynamic";
 
 export const CHANNEL_COLUMNS =
-  "id, waha_session_name, display_name, phone_number, status, status_reason, last_health_check_at, last_status_change_at, daily_message_limit, is_warmup_complete, created_at";
+  "id, provider, ryze_instance_name, display_name, phone_number, status, status_reason, last_health_check_at, last_status_change_at, daily_message_limit, is_warmup_complete, created_at";
 
 export async function GET(): Promise<Response> {
   const requestId = randomUUID();
@@ -75,15 +75,6 @@ export async function POST(req: NextRequest): Promise<Response> {
   const { user, org: activeOrg } = authz;
   if (await mfaEmDivida()) return fail("mfa_required", t("Confirme a verificação em duas etapas."), 403, { requestId });
 
-  const waha = getWahaClient();
-  if (!waha) {
-    return fail(
-      "waha_not_configured",
-      t("O WhatsApp (WAHA) não está configurado neste ambiente: faltam WAHA_API_BASE_URL e/ou WAHA_API_KEY. Configure-as e tente de novo."),
-      503,
-      { requestId },
-    );
-  }
 
   let raw: unknown = {};
   try {
@@ -100,9 +91,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   try {
-    const result = await connectWahaChannel(await createClient(), createAdminClient(), waha, {
+    const result = await connectRyzeChannel(await createClient(), {
       organizationId: activeOrg.orgId, idempotencyKey: req.headers.get("Idempotency-Key") ?? "",
-      userId: user.id, requestId, displayName: parsed.data.display_name,
+      displayName: parsed.data.display_name,
     });
     return ok(result.channel, { requestId, status: result.replay ? 200 : 201 });
   } catch (error) {

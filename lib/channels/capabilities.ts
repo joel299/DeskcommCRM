@@ -69,6 +69,16 @@ export const CHANNEL_CAPABILITIES: Record<ChannelProvider, ChannelCapabilities> 
     groups: "limited",
     costPerMessage: true,
   },
+  ryze: {
+    freeformOutsideWindow: true,
+    requiresTemplates: false,
+    canManageTemplates: false,
+    banRisk: true,
+    minIntervalMs: null,
+    voiceNote: "opus-only",
+    groups: "full",
+    costPerMessage: false,
+  },
 };
 
 /**
@@ -81,7 +91,7 @@ export const CHANNEL_CAPABILITIES: Record<ChannelProvider, ChannelCapabilities> 
  * CONSERVADOR dos dois — banRisk armado, throttle e warm-up ligados; errar para
  * o lado do meta_cloud desarmaria o anti-ban num número que pode ser banido.
  */
-export const DEFAULT_CHANNEL_PROVIDER: ChannelProvider = "waha";
+export const DEFAULT_CHANNEL_PROVIDER: ChannelProvider = "ryze";
 
 /**
  * Constantes nomeadas dos providers. Existem para que nenhum arquivo fora deste
@@ -90,6 +100,7 @@ export const DEFAULT_CHANNEL_PROVIDER: ChannelProvider = "waha";
 export const CHANNEL_PROVIDER_WAHA: ChannelProvider = "waha";
 export const CHANNEL_PROVIDER_META: ChannelProvider = "meta_cloud";
 export const CHANNEL_PROVIDER_ZERNIO: ChannelProvider = "zernio";
+export const CHANNEL_PROVIDER_RYZE: ChannelProvider = "ryze";
 
 export function capabilitiesOf(provider: ChannelProvider): ChannelCapabilities {
   const caps = CHANNEL_CAPABILITIES[provider];

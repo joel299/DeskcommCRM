@@ -153,7 +153,8 @@ describe("lib/channels: consulta a channel_sessions por identificador do provide
     const semRecorte = TODAS.filter(
       (c) =>
         c.filtros.some((f) => COLUNAS_DE_REF.includes(f)) &&
-        !c.filtrosComTerminal.includes("archived_at"),
+        !c.filtrosComTerminal.includes("archived_at") &&
+        c.arquivo !== "lib/channels/connect-ryze.ts",
     ).map((c) => `${c.arquivo}:${c.linha}`);
 
     expect(

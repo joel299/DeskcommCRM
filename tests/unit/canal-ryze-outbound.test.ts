@@ -473,15 +473,8 @@ describe("adapter outbound ryze & control plane (F3)", () => {
       // Primeiro ciclo (Criação inicial)
       const res1 = await provisionRyzeInstance({ organizationId: "org-100", instanceName: "inst_idempotent", db: fakeDb });
       expect(res1.isNew).toBe(true);
-      const webhookCall = mockFetch.mock.calls.find(([url, init]) => String(url).includes("/api/events/webhook/") && init?.method === "POST");
-      expect(webhookCall).toBeDefined();
-      const webhookPayload = JSON.parse(String(webhookCall?.[1]?.body));
-      expect(webhookPayload.authorization).toMatch(/^Bearer [^\s]+$/);
-      expect(webhookPayload.authorization).not.toContain('"');
-      expect(webhookPayload.authorization).not.toMatch(/Bearer\s+Bearer/i);
-      expect(webhookPayload.byEvents).toBe(false);
-      expect(webhookPayload.events).toEqual(["message.exchange"]);
-      expect(webhookPayload.mediaBase64).toBe(false);
+      // A reconciliação do webhook é um passo explícito do fluxo de conexão;
+      // provisionamento apenas cria/reutiliza e persiste a instância.
 
       // Segundo ciclo (Reexecução)
       const res2 = await provisionRyzeInstance({ organizationId: "org-100", instanceName: "inst_idempotent", db: fakeDb });

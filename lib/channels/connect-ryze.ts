@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ChannelConnectionError } from "./connection-error";
 import { logger } from "@/lib/logger";
-import { listRyzeInstances, lookupRyzeSession, provisionRyzeInstance } from "./ryze/control-plane";
+import { listRyzeInstances, lookupRyzeSession, provisionRyzeInstance, reconcileRyzeWebhook } from "./ryze/control-plane";
 
 function instanceNameFor(input: { organizationId: string; idempotencyKey: string }): string {
   const digest = createHash("sha256")
@@ -34,6 +34,7 @@ export async function connectRyzeChannel(
   if (existing.id) {
     const { data } = await db.from("channel_sessions").select("*").eq("id", existing.id).eq("organization_id", input.organizationId).single();
     if (!data) throw new ChannelConnectionError("connection_reservation_missing", 410);
+    await reconcileRyzeWebhook(db, { organizationId: input.organizationId, instanceName });
     return { channel: data as Record<string, unknown>, replay: true, instanceName, isNew: false };
   }
 
@@ -58,6 +59,7 @@ export async function connectRyzeChannel(
     };
     const updated = await db.from("channel_sessions").update(patch).eq("id", data.id).eq("organization_id", input.organizationId).select("*").single();
     if (updated.error || !updated.data) throw new Error("ryze_session_status_sync_failed");
+    await reconcileRyzeWebhook(db, { organizationId: input.organizationId, instanceName });
     return { channel: updated.data as Record<string, unknown>, replay: false, instanceName, isNew: provisioned.isNew };
   } catch (cause) {
     if (cause instanceof ChannelConnectionError) throw cause;

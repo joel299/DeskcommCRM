@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ChannelConnectionError } from "./connect-waha";
 import { logger } from "@/lib/logger";
+import { ARCHIVED_AT, queryTolerantToMissingArchived } from "./archived";
 import { listRyzeInstances, lookupRyzeSession, provisionRyzeInstance } from "./ryze/control-plane";
 
 function instanceNameFor(input: { organizationId: string; idempotencyKey: string }): string {
@@ -35,7 +36,10 @@ export async function connectRyzeChannel(
     const provisioned = await provisionRyzeInstance({ organizationId: input.organizationId, instanceName, db });
     const instances = await listRyzeInstances();
     const remote = instances.find((item) => item.name === instanceName);
-    const { data, error } = await db.from("channel_sessions").select("*").eq("organization_id", input.organizationId).eq("provider", "ryze").eq("ryze_instance_name", instanceName).maybeSingle();
+    const { data, error } = await queryTolerantToMissingArchived(
+      () => db.from("channel_sessions").select("*").eq("organization_id", input.organizationId).eq("provider", "ryze").eq("ryze_instance_name", instanceName).is(ARCHIVED_AT, null).maybeSingle(),
+      () => db.from("channel_sessions").select("*").eq("organization_id", input.organizationId).eq("provider", "ryze").eq("ryze_instance_name", instanceName).maybeSingle(),
+    );
     if (error || !data) throw new Error("ryze_session_persistence_missing");
     const updated = await db.from("channel_sessions").update({ display_name: input.displayName ?? null, status: mapStatus(remote?.status), status_reason: null, last_status_change_at: new Date().toISOString() }).eq("id", data.id).eq("organization_id", input.organizationId).select("*").single();
     if (updated.error || !updated.data) throw new Error("ryze_session_status_sync_failed");

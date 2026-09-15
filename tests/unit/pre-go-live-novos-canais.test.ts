@@ -22,10 +22,10 @@ describe("todo canal criado pela interface nasce em pré-go-live", () => {
     "app/api/v1/onboarding/whatsapp/session/route.ts",
   ])("%s cria via reserva transacional com pré-go-live no schema", (arquivo) => {
     const fonte = readFileSync(resolve(RAIZ, arquivo), "utf8");
-    expect(fonte).toMatch(/await connectWahaChannel\(/);
+    expect(fonte).toMatch(/await connectRyzeChannel\(/);
     expect(fonte).not.toMatch(/\.insert\(/);
-    const helper = readFileSync(resolve(RAIZ, "lib/channels/connect-waha.ts"), "utf8");
-    expect(helper).toContain('authDb.rpc("fn_reserve_channel_connection"');
+    const helper = readFileSync(resolve(RAIZ, "lib/channels/connect-ryze.ts"), "utf8");
+    expect(helper).toContain("provisionRyzeInstance");
     const baseline = readFileSync(resolve(RAIZ, "supabase/baseline.sql"), "utf8");
     const fn = baseline.slice(baseline.lastIndexOf("create or replace function public.fn_reserve_channel_connection(")).split("\n$$;")[0]!;
     const initial = fn.match(/'(\{"ai_gate"[^']+\})'::jsonb/);
